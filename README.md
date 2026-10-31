@@ -1,5 +1,9 @@
 # LumaDock
 
+[**Windows 설치 파일 다운로드 · 0.0.1 Beta**](https://github.com/SCOTT0318/LumaDock/releases/download/v0.0.1/LumaDock-Setup-0.0.1.exe)
+
+[릴리스 설명](https://github.com/SCOTT0318/LumaDock/releases/tag/v0.0.1) · [SHA-256 체크섬](https://github.com/SCOTT0318/LumaDock/releases/download/v0.0.1/SHA256SUMS.txt)
+
 Windows 모니터 밝기·명암 제어와 바탕화면 위젯.
 
 현재 버전: **0.0.1 Beta**
