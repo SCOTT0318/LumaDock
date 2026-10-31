@@ -171,6 +171,7 @@
                 <Border Background="#1C3431" CornerRadius="6" Padding="8,5" VerticalAlignment="Center" Margin="0,0,12,0"><TextBlock x:Name="ModeBadge" Text="LIVE" Foreground="#8CE8D3" FontSize="9" FontWeight="SemiBold"/></Border>
                 <Button x:Name="RefreshButton" Content="다시 검색" Margin="0,0,7,0" ToolTip="연결된 모니터와 지원 기능을 다시 읽습니다"/>
                 <Button x:Name="TrayButton" Content="트레이로" Margin="0,0,7,0" ToolTip="알림 영역에서 계속 실행합니다"/>
+                <Button x:Name="SettingsButton" Content="설정" Margin="0,0,7,0"/>
                 <Button x:Name="WidgetButton" Style="{StaticResource PrimaryButton}">
                     <StackPanel Orientation="Horizontal"><Grid Width="12" Height="12" Margin="0,0,7,0"><Border Width="5" Height="5" Background="#173F3C" CornerRadius="1" HorizontalAlignment="Left" VerticalAlignment="Top"/><Border Width="5" Height="5" Background="#173F3C" CornerRadius="1" HorizontalAlignment="Right" VerticalAlignment="Top"/><Border Width="5" Height="5" Background="#173F3C" CornerRadius="1" HorizontalAlignment="Left" VerticalAlignment="Bottom"/><Border Width="5" Height="5" Background="#173F3C" CornerRadius="1" HorizontalAlignment="Right" VerticalAlignment="Bottom"/></Grid><TextBlock Text="위젯" Foreground="#122A2C" FontSize="11" FontWeight="SemiBold"/></StackPanel>
                 </Button>

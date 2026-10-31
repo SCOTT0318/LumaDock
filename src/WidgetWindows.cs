@@ -277,7 +277,7 @@ namespace MonitorControl
             Topmost = Placement.AlwaysOnTop; ApplyTheme();
             title.Text = monitor == null ? Placement.MonitorName : monitor.Name;
             Title = "LumaDock 위젯 · " + title.Text;
-            subtitle.Text = monitor == null ? "연결 대기" : monitor.Display + (monitor.Demo ? "  ·  DEMO" : "");
+            subtitle.Text = monitor == null ? "연결 대기" : monitor.Display + " · " + monitor.PositionLabel + (monitor.Demo ? "  ·  DEMO" : "");
             if (monitor == null)
             {
                 var offline = MainWindow.Text("모니터 연결을 확인하세요.", 11, Placement.Theme == "light" ? "#4F707E" : "#93AABA");

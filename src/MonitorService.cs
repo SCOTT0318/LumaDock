@@ -15,6 +15,9 @@ namespace MonitorControl
     {
         public string Id;
         public string Name;
+        public string HardwareName;
+        public int Left, Top, Width, Height;
+        public string PositionLabel;
         public string Display;
         public string Resolution;
         public bool Primary;
@@ -41,6 +44,7 @@ namespace MonitorControl
         private List<MonitorDevice> devices = new List<MonitorDevice>();
         private bool disposed;
         public event Action<MonitorDevice, MonitorFeature> FeatureChanged;
+        public event Action<MonitorDevice, MonitorFeature, uint> FeatureChanging;
         public MonitorService(bool demoMode) { demo = demoMode; }
 
         public Task<List<MonitorDevice>> ScanAsync()
@@ -55,6 +59,7 @@ namespace MonitorControl
                     devices.Clear();
                     if (demo) devices = DemoDevices();
                     else ScanNative(devices);
+                    InitializeMetadata(devices);
                     return new List<MonitorDevice>(devices);
                 }
                 finally { gate.Release(); }
@@ -78,7 +83,9 @@ namespace MonitorControl
                 if (!NativeMethods.GetNumberOfPhysicalMonitorsFromHMONITOR(logical, out count) || count == 0 || count > 64)
                 {
                     found.Add(new MonitorDevice { Id = deviceId.Length == 0 ? info.Device : deviceId, Name = String.IsNullOrEmpty(display.Description) ? displayName : display.Description,
-                        Display = displayName, Resolution = resolution, Primary = (info.Flags & 1) != 0, Notice = "이 연결에서는 모니터 제어 채널을 찾지 못했습니다." });
+                        Display = displayName, Resolution = resolution, Primary = (info.Flags & 1) != 0,
+                        Left = info.Monitor.Left, Top = info.Monitor.Top, Width = info.Monitor.Right - info.Monitor.Left, Height = info.Monitor.Bottom - info.Monitor.Top,
+                        Notice = "이 연결에서는 모니터 제어 채널을 찾지 못했습니다." });
                     return true;
                 }
                 var physical = new NativeMethods.PhysicalMonitor[count];
@@ -86,13 +93,16 @@ namespace MonitorControl
                 {
                     foreach (var handle in physical) if (handle.Handle != IntPtr.Zero) NativeMethods.DestroyPhysicalMonitor(handle.Handle);
                     found.Add(new MonitorDevice { Id = info.Device, Name = displayName, Display = displayName, Resolution = resolution,
-                        Primary = (info.Flags & 1) != 0, Notice = "모니터 연결을 열지 못했습니다. 다시 검색해 주세요." });
+                        Primary = (info.Flags & 1) != 0,
+                        Left = info.Monitor.Left, Top = info.Monitor.Top, Width = info.Monitor.Right - info.Monitor.Left, Height = info.Monitor.Bottom - info.Monitor.Top,
+                        Notice = "모니터 연결을 열지 못했습니다. 다시 검색해 주세요." });
                     return true;
                 }
                 for (int i = 0; i < physical.Length; i++)
                 {
                     var device = new MonitorDevice { Handle = physical[i].Handle, Id = (deviceId.Length == 0 ? info.Device : deviceId) + "|" + i,
-                        Name = physical[i].Description, Display = displayName, Resolution = resolution, Primary = (info.Flags & 1) != 0 };
+                        Name = physical[i].Description, Display = displayName, Resolution = resolution, Primary = (info.Flags & 1) != 0,
+                        Left = info.Monitor.Left, Top = info.Monitor.Top, Width = info.Monitor.Right - info.Monitor.Left, Height = info.Monitor.Bottom - info.Monitor.Top };
                     // Ownership transfers immediately, including failures in capability discovery.
                     found.Add(device);
                     try { Discover(device); }
@@ -128,6 +138,52 @@ namespace MonitorControl
             catch (ManagementException) { }
             catch (UnauthorizedAccessException) { }
             catch (COMException) { }
+        }
+
+        private static void InitializeMetadata(List<MonitorDevice> found)
+        {
+            var primary = found.FirstOrDefault(x => x.Primary && x.Width > 0) ?? found.FirstOrDefault(x => x.Width > 0);
+            foreach (var monitor in found)
+            {
+                monitor.HardwareName = monitor.Name;
+                if (monitor.Primary) { monitor.PositionLabel = "주 모니터"; continue; }
+                if (primary == null || monitor.Width <= 0 || monitor.Height <= 0) { monitor.PositionLabel = "위치 정보 없음"; continue; }
+                double dx = monitor.Left + monitor.Width / 2.0 - primary.Left - primary.Width / 2.0;
+                double dy = monitor.Top + monitor.Height / 2.0 - primary.Top - primary.Height / 2.0;
+                var parts = new List<string>();
+                if (Math.Abs(dx) > primary.Width * .25) parts.Add(dx < 0 ? "왼쪽" : "오른쪽");
+                if (Math.Abs(dy) > primary.Height * .25) parts.Add(dy < 0 ? "위쪽" : "아래쪽");
+                monitor.PositionLabel = parts.Count == 0 ? "화면 겹침" : String.Join(" ", parts);
+            }
+        }
+
+        public Task RefreshBrightnessAsync(bool nativeOnly = false)
+        {
+            return Task.Run(async delegate {
+                var changed = new List<KeyValuePair<MonitorDevice, MonitorFeature>>();
+                await gate.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    if (disposed) return;
+                    foreach (var monitor in devices)
+                    {
+                        var feature = monitor.Features.FirstOrDefault(x => x.Definition.Code == 0x10);
+                        if (feature == null || monitor.Demo) continue;
+                        if (nativeOnly && feature.Backend != "WMI") continue;
+                        try
+                        {
+                            uint actual;
+                            if (TryRead(monitor, feature, out actual) && actual != feature.Current)
+                            { feature.Current = actual; changed.Add(new KeyValuePair<MonitorDevice, MonitorFeature>(monitor, feature)); }
+                        }
+                        catch (ManagementException) { }
+                        catch (COMException) { }
+                    }
+                }
+                finally { gate.Release(); }
+                var notify = FeatureChanged;
+                if (notify != null) foreach (var pair in changed) notify(pair.Key, pair.Value);
+            });
         }
 
         internal static string NormalizeId(string value)
@@ -233,6 +289,8 @@ namespace MonitorControl
                     else if (value < feature.Minimum || value > feature.Maximum) throw new ArgumentOutOfRangeException("value");
                     if (feature.Backend == "WMI" && feature.Choices.Count > 0) value = feature.Choices.OrderBy(x => Math.Abs((long)x - value)).First();
                     if (device.Demo) { feature.Current = value; return value; }
+                    var changing = FeatureChanging;
+                    if (changing != null) changing(device, feature, value);
                     if (feature.Backend == "WMI") WriteWmi(device.WmiInstance, value);
                     else
                     {
@@ -335,6 +393,9 @@ namespace MonitorControl
             var one = DemoDevice("demo-1", "DELL U2723QE", "DISPLAY1", "3840 × 2160", true, "(vcp(10 12 60(0f 11 12) 62 14(05 08 0B) 16 18 1A 87))");
             var two = DemoDevice("demo-2", "LG ULTRAGEAR", "DISPLAY2", "2560 × 1440", false, "(vcp(10 12 60(0f 11) 87))");
             var three = DemoDevice("demo-3", "내장 디스플레이", "DISPLAY3", "1920 × 1200", false, "(vcp(10))");
+            one.Width = 3840; one.Height = 2160;
+            two.Left = 3840; two.Width = 2560; two.Height = 1440;
+            three.Top = 2160; three.Width = 1920; three.Height = 1200;
             return new List<MonitorDevice> { one, two, three };
         }
 

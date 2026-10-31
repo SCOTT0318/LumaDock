@@ -15,6 +15,7 @@ namespace MonitorControl
         {
             try
             {
+                if (AppUpdater.TryApplyUpdate(args)) return 0;
                 bool demo = args.Contains("--demo") || args.Contains("--render-demo");
                 string diagnose = Argument(args, "--diagnose");
                 string preview = Argument(args, "--render-demo");
@@ -26,7 +27,7 @@ namespace MonitorControl
                         var report = new {
                             ReadOnly = true, Demo = demo, CapturedAt = DateTimeOffset.Now.ToString("o"),
                             Monitors = monitors.Select(m => new {
-                                m.Name, m.Display, m.Resolution, m.Primary, m.Notice,
+                                m.Name, m.Display, m.Resolution, m.Primary, m.Notice, m.Left, m.Top, m.Width, m.Height, m.PositionLabel,
                                 Transport = m.WmiInstance != null ? "WMI" : "DDC/CI",
                                 Features = m.Features.Select(f => new {
                                     Code = "0x" + f.Definition.Code.ToString("X2"), f.Definition.Name,

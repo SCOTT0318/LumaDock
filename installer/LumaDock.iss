@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.0.2"
+  #define AppVersion "1.0.0"
 #endif
 #ifndef ProjectRoot
   #define ProjectRoot SourcePath + ".."
@@ -16,7 +16,7 @@ AppId={{7D1C732B-9E31-42B4-AC9B-8264492E0591}
 #endif
 AppName=LumaDock
 AppVersion={#AppVersion}
-AppVerName=LumaDock {#AppVersion} Beta
+AppVerName=LumaDock {#AppVersion}
 AppPublisher=LumaDock
 AppCopyright=LumaDock
 #ifdef TestBuild
@@ -81,7 +81,7 @@ UsePreviousTasks=yes
 Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 
 [Messages]
-WelcomeLabel1=LumaDock Beta 설치
+WelcomeLabel1=LumaDock 설치
 WelcomeLabel2=모니터 제어 앱을 설치합니다.
 SelectDirDesc=설치 위치 선택
 SelectDirLabel3=선택한 폴더 아래 LumaDock 폴더에 설치합니다.
@@ -90,7 +90,7 @@ SelectTasksDesc=바로가기 선택
 SelectTasksLabel2=추가할 바로가기를 선택하세요.
 FinishedHeadingLabel=설치가 완료되었습니다
 FinishedLabel=설치가 완료되었습니다.
-BeveledLabel=LumaDock Beta
+BeveledLabel=LumaDock
 
 [Tasks]
 Name: "desktopicon"; Description: "바탕화면에 바로가기 만들기"; GroupDescription: "바로가기"; Flags: unchecked

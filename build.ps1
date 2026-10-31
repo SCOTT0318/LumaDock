@@ -32,6 +32,13 @@ if ($Test) {
     if ($LASTEXITCODE -ne 0) { throw 'Settings test build failed.' }
     & $settingsTestPath (Join-Path $projectRoot 'artifacts\settings-tests')
     if ($LASTEXITCODE -ne 0) { throw 'Settings tests failed.' }
+    foreach ($suite in @('BrightnessInput', 'AppUpdater', 'ControlSettings')) {
+        $suitePath = Join-Path $outputDirectory ($suite + '.Tests.exe')
+        & $compilerPath /nologo /utf8output /codepage:65001 /langversion:5 /target:exe "/out:$suitePath" "/reference:$applicationPath" @references (Join-Path $projectRoot ('tests\' + $suite + 'Tests.cs'))
+        if ($LASTEXITCODE -ne 0) { throw "$suite test build failed." }
+        & $suitePath (Join-Path $projectRoot 'artifacts\feature-tests')
+        if ($LASTEXITCODE -ne 0) { throw "$suite tests failed." }
+    }
     $uiTestPath = Join-Path $outputDirectory 'MonitorControl.UiTests.exe'
     & $compilerPath /nologo /utf8output /codepage:65001 /langversion:5 /target:winexe "/out:$uiTestPath" "/reference:$applicationPath" @references (Join-Path $projectRoot 'tests\UiTests.cs')
     if ($LASTEXITCODE -ne 0) { throw 'UI test build failed.' }
@@ -42,4 +49,12 @@ if ($Test) {
     $uiProcess = Start-Process -FilePath $uiTestPath -ArgumentList ('"{0}"' -f $uiResults) -WindowStyle Hidden -Wait -PassThru
     Get-Content -LiteralPath $uiResults
     if ($uiProcess.ExitCode -ne 0) { throw 'UI tests failed.' }
+    $displayTestPath = Join-Path $outputDirectory 'DisplayFeatures.Tests.exe'
+    & $compilerPath /nologo /utf8output /codepage:65001 /langversion:5 /target:winexe "/out:$displayTestPath" "/reference:$applicationPath" @references (Join-Path $projectRoot 'tests\DisplayFeaturesTests.cs')
+    if ($LASTEXITCODE -ne 0) { throw 'Display feature test build failed.' }
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'App.config') -Destination ($displayTestPath + '.config') -Force
+    $displayResults = Join-Path $testArtifacts 'display-feature-tests.txt'
+    $displayProcess = Start-Process -FilePath $displayTestPath -ArgumentList ('"{0}"' -f $displayResults) -WindowStyle Hidden -Wait -PassThru
+    Get-Content -LiteralPath $displayResults
+    if ($displayProcess.ExitCode -ne 0) { throw 'Display feature UI tests failed.' }
 }

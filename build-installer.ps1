@@ -1,7 +1,7 @@
 ﻿param([switch]$Test, [string]$CompilerPath)
 $ErrorActionPreference = 'Stop'
 $projectRoot = $PSScriptRoot
-$version = '0.0.2'
+$version = '1.0.0'
 if (-not $CompilerPath) { $CompilerPath = Join-Path $projectRoot 'installer\tools\InnoSetup\ISCC.exe' }
 if (-not (Test-Path -LiteralPath $CompilerPath)) {
     $availableCompiler = Get-Command ISCC.exe -ErrorAction SilentlyContinue

@@ -9,6 +9,7 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Markup;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -28,6 +29,12 @@ namespace MonitorControl
         private Forms.NotifyIcon tray;
         private System.Drawing.Icon trayIcon;
         private readonly WidgetManager widgets;
+        private readonly BrightnessInput brightnessInput;
+        private readonly AppUpdater updater;
+        private readonly BrightnessFlyout flyout;
+        private DisplaySettingsWindow settingsWindow;
+        private readonly Dictionary<MonitorDevice, int> pendingBrightness = new Dictionary<MonitorDevice, int>();
+        private bool applyingBrightness, refreshNativeBrightness;
         private readonly DispatcherTimer displayTimer;
         private bool refreshing, refreshAgain, closing, allowClose, exitRequested;
         private readonly string previewDirectory;
@@ -46,11 +53,16 @@ namespace MonitorControl
                 view = (Grid)XamlReader.Load(stream);
             Content = view;
             widgets = new WidgetManager(this, service, view.Resources, RefreshAsync, SetStatus, !demo && String.IsNullOrEmpty(previewDirectory));
+            brightnessInput = new BrightnessInput(this, OnBrightnessDelta, SetStatus, demo);
+            updater = new AppUpdater(this, demo, RequestExit);
+            flyout = new BrightnessFlyout(service, view.Resources, SetStatus, RefreshAsync, ShowWindow, ShowDisplaySettings);
             service.FeatureChanged += OnFeatureChanged;
+            service.FeatureChanging += OnFeatureChanging;
             AppIdentity.Hook(this, ShowWindow); AppIdentity.DarkTitlebar(this);
             Element<Button>("RefreshButton").Click += async delegate { await RefreshAsync(); };
             Element<Button>("TrayButton").Click += delegate { Hide(); };
             Element<Button>("WidgetButton").Click += delegate { widgets.ShowManager(selected); };
+            Element<Button>("SettingsButton").Click += delegate { ShowDisplaySettings(); };
             if (demo)
             {
                 Element<TextBlock>("ModeBadge").Text = "DEMO";
@@ -64,6 +76,7 @@ namespace MonitorControl
             Loaded += async delegate {
                 await RefreshAsync();
                 if (!String.IsNullOrEmpty(previewDirectory)) await RenderPreviews();
+                else if (!demo && widgets.Settings.CheckUpdatesOnStartup) await updater.CheckAsync(true);
             };
             Closing += OnClosing;
         }
@@ -81,6 +94,7 @@ namespace MonitorControl
             refreshing = true;
             string oldId = selected == null ? null : selected.Id;
             foreach (var row in rows) row.Stop();
+            pendingBrightness.Clear(); flyout.Suspend();
             widgets.BeforeScan();
             Element<Button>("RefreshButton").IsEnabled = false;
             Element<Button>("WidgetButton").IsEnabled = false;
@@ -91,15 +105,25 @@ namespace MonitorControl
             {
                 monitors = await service.ScanAsync();
                 if (closing) return;
+                ApplyDisplayNames();
                 selected = monitors.FirstOrDefault(x => x.Id == oldId) ?? monitors.FirstOrDefault(x => x.Primary) ?? monitors.FirstOrDefault();
                 RenderMonitorList(); RenderFeatures();
                 widgets.Rebind(monitors);
+                ConfigureBrightnessInput();
+                if (settingsWindow != null) settingsWindow.RefreshConnectedMonitors(monitors);
+                if (flyout.IsVisible) flyout.Bind(monitors);
                 SetStatus(demo ? "데모" : "모니터 " + monitors.Count + "개 연결됨");
             }
             catch (Exception ex)
             {
                 monitors.Clear(); selected = null;
-                if (!closing) { RenderMonitorList(); RenderFeatures(); widgets.Rebind(monitors); SetStatus("검색 실패 · " + ex.Message); }
+                if (!closing)
+                {
+                    RenderMonitorList(); RenderFeatures(); widgets.Rebind(monitors);
+                    if (settingsWindow != null) settingsWindow.RefreshConnectedMonitors(monitors);
+                    if (flyout.IsVisible) flyout.Bind(monitors);
+                    SetStatus("검색 실패 · " + ex.Message);
+                }
             }
             finally
             {
@@ -129,14 +153,12 @@ namespace MonitorControl
                 heading.Children.Add(icon); contents.Children.Add(heading);
                 var name = Text(device.Name, 13, active ? "#EDF9F6" : "#CBD8E2"); name.FontWeight = FontWeights.SemiBold; name.TextTrimming = TextTrimming.CharacterEllipsis;
                 contents.Children.Add(name);
-                contents.Children.Add(new TextBlock { Text = device.Display + (device.Primary ? "  ·  주 모니터" : ""), Foreground = Brush("#8A9EAD"), FontSize = 10, Margin = new Thickness(0, 6, 0, 0) });
+                contents.Children.Add(new TextBlock { Text = device.Display + "  ·  " + device.PositionLabel, Foreground = Brush("#8A9EAD"), FontSize = 10, Margin = new Thickness(0, 6, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });
                 var button = new Button { Content = contents, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(15), Margin = new Thickness(0, 0, 0, 10),
                     Background = Brush(active ? "#203630" : "#1B242E"), BorderBrush = Brush(active ? "#65B6A6" : "#2B3744"), ToolTip = device.Name + " · " + device.Resolution };
                 AutomationProperties.SetName(button, device.Name + " 모니터 선택");
                 button.Click += delegate {
-                    foreach (var row in rows) row.Stop(true);
-                    selected = device; RenderMonitorList(); RenderFeatures();
-                    SetStatus(device.Name);
+                    SelectMonitor(device);
                 };
                 list.Children.Add(button);
             }
@@ -155,8 +177,10 @@ namespace MonitorControl
                 return;
             }
             Element<TextBlock>("DeviceTitle").Text = selected.Name;
-            Element<TextBlock>("DeviceSubtitle").Text = selected.Display + "    ·    " + selected.Resolution + (selected.Primary ? "    ·    주 모니터" : "");
+            Element<TextBlock>("DeviceSubtitle").Text = (selected.Name != selected.HardwareName ? selected.HardwareName + "  ·  " : "") + selected.Display + "  ·  " + selected.Resolution + "  ·  " + selected.PositionLabel;
             Element<TextBlock>("ConnectionText").Text = demo ? "데모 모니터" : selected.Features.Any(x => x.Backend == "WMI") ? "Windows 밝기" : selected.Features.Count > 0 ? "DDC/CI 연결" : "제어 미지원";
+            var map = new DisplayMapControl(monitors, SelectMonitor) { Height = 140, Margin = new Thickness(0, 0, 0, 14) };
+            map.SetSelected(selected.Id); panel.Children.Add(map);
             var basic = selected.Features.Where(x => x.Definition.Basic).ToList();
             if (basic.Count > 0)
             {
@@ -213,6 +237,9 @@ namespace MonitorControl
             tray = new Forms.NotifyIcon { Icon = trayIcon, Text = "LumaDock" + (demo ? " (Demo)" : ""), Visible = String.IsNullOrEmpty(previewDirectory) };
             var menu = new Forms.ContextMenuStrip { BackColor = System.Drawing.Color.FromArgb(23, 34, 45), ForeColor = System.Drawing.Color.FromArgb(232, 242, 248), Renderer = new Forms.ToolStripProfessionalRenderer(new TrayColors()) };
             menu.Items.Add("LumaDock 열기", null, delegate { ShowWindow(); });
+            menu.Items.Add("밝기", null, delegate { ToggleBrightnessFlyout(); });
+            menu.Items.Add("설정", null, delegate { ShowDisplaySettings(); });
+            menu.Items.Add("업데이트 확인", null, async delegate { await updater.CheckAsync(); });
             menu.Items.Add("위젯 설정", null, delegate { ShowWindow(); widgets.ShowManager(selected); });
             menu.Items.Add("위젯 표시 / 숨기기", null, delegate { widgets.ToggleVisibility(); });
             menu.Items.Add(new Forms.ToolStripSeparator());
@@ -220,8 +247,7 @@ namespace MonitorControl
             menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add("종료", null, delegate { RequestExit(); });
             tray.ContextMenuStrip = menu;
-            tray.DoubleClick += delegate { ShowWindow(); };
-            tray.MouseClick += delegate(object sender, Forms.MouseEventArgs e) { if (e.Button == Forms.MouseButtons.Left) ShowWindow(); };
+            tray.MouseClick += delegate(object sender, Forms.MouseEventArgs e) { if (e.Button == Forms.MouseButtons.Left) ToggleBrightnessFlyout(); };
             Icon = AppIdentity.WindowIcon();
         }
 
@@ -243,7 +269,114 @@ namespace MonitorControl
                 if (closing) return;
                 if (selected == device) foreach (var row in rows) row.RefreshFromModel(feature);
                 widgets.RefreshValues(device, feature);
+                flyout.RefreshValues(feature);
             }));
+        }
+
+        private void SelectMonitor(MonitorDevice device)
+        {
+            foreach (var row in rows) row.Stop(true);
+            selected = device; RenderMonitorList(); RenderFeatures(); SetStatus(device.Name);
+        }
+
+        private void ApplyDisplayNames()
+        {
+            BrightnessRouting.ApplyAliases(monitors, widgets.Settings.Monitors);
+            foreach (var placement in widgets.Settings.Widgets)
+            {
+                var monitor = monitors.FirstOrDefault(x => String.Equals(x.Id, placement.MonitorId, StringComparison.OrdinalIgnoreCase));
+                if (monitor != null) placement.MonitorName = monitor.Name;
+            }
+        }
+
+        private void ShowDisplaySettings()
+        {
+            ShowWindow();
+            if (settingsWindow != null) { settingsWindow.Activate(); return; }
+            settingsWindow = new DisplaySettingsWindow(view.Resources, monitors, widgets.Settings, delegate {
+                ApplyDisplayNames(); widgets.Save(); RenderMonitorList(); RenderFeatures(); widgets.Rebind(monitors);
+                pendingBrightness.Clear(); ConfigureBrightnessInput();
+                if (flyout.IsVisible) flyout.Bind(monitors);
+                var inputSettings = widgets.Settings.Brightness;
+                SetStatus(!demo && inputSettings.Enabled && inputSettings.UseHotkeys && !brightnessInput.HotkeysAvailable
+                    ? "설정 저장됨 · 다른 앱이 단축키를 사용 중이어서 등록하지 못했습니다."
+                    : "설정 저장됨");
+            }, IdentifyMonitor, async delegate { await updater.CheckAsync(); }) { Owner = this };
+            settingsWindow.Closed += delegate { settingsWindow = null; };
+            settingsWindow.Show();
+        }
+
+        private void IdentifyMonitor(string id)
+        {
+            var monitor = monitors.FirstOrDefault(x => x.Id == id);
+            if (monitor == null || monitor.Width <= 0) { SetStatus("모니터 위치 정보를 확인할 수 없습니다."); return; }
+            new MonitorIdentifier(monitor, monitors.IndexOf(monitor) + 1).Show();
+        }
+
+        private async void ToggleBrightnessFlyout()
+        {
+            if (closing) return;
+            if (flyout.IsVisible) { flyout.HidePopup(); return; }
+            flyout.Bind(monitors); flyout.ShowPopup();
+            try { await service.RefreshBrightnessAsync(); }
+            catch (Exception ex) { SetStatus("밝기 조회 실패 · " + ex.Message); }
+        }
+
+        private void ConfigureBrightnessInput()
+        {
+            var preferences = widgets.Settings.Brightness;
+            brightnessInput.Configure(preferences.Enabled, preferences.FollowWindows, preferences.StepPercent, ModifierKeys.Control | ModifierKeys.Alt, Key.Up, Key.Down, preferences.UseHotkeys);
+        }
+
+        private void OnFeatureChanging(MonitorDevice monitor, MonitorFeature feature, uint value)
+        {
+            if (feature.Definition.Code == 0x10 && feature.Backend == "WMI") brightnessInput.ExpectWindowsBrightness(monitor.WmiInstance, (int)value);
+        }
+
+        private void OnBrightnessDelta(int delta)
+        {
+            if (closing || refreshing || delta == 0) return;
+            string source = brightnessInput.SourceKind, sourceInstance = brightnessInput.WindowsSourceInstance;
+            var point = Forms.Control.MousePosition;
+            var targets = BrightnessRouting.Targets(monitors, widgets.Settings.Brightness, point.X, point.Y);
+            foreach (var monitor in targets)
+            {
+                var feature = monitor.Features.First(x => x.Definition.Code == 0x10);
+                // Native Windows/firmware already changes its own panel. Never add
+                // the same delta to that panel a second time.
+                if (feature.Backend == "WMI" && (source == "raw" || (source == "windows" && String.Equals(monitor.WmiInstance, sourceInstance, StringComparison.OrdinalIgnoreCase))))
+                { pendingBrightness.Remove(monitor); continue; }
+                int desired;
+                if (!pendingBrightness.TryGetValue(monitor, out desired)) desired = feature.Percent(feature.Current);
+                pendingBrightness[monitor] = Math.Max(0, Math.Min(100, desired + delta));
+            }
+            if (source == "windows" || source == "raw") refreshNativeBrightness = true;
+            if (!applyingBrightness) ApplyPendingBrightness();
+        }
+
+        private async void ApplyPendingBrightness()
+        {
+            applyingBrightness = true;
+            try
+            {
+                while (!closing && !refreshing && (pendingBrightness.Count > 0 || refreshNativeBrightness))
+                {
+                    if (refreshNativeBrightness) { refreshNativeBrightness = false; await service.RefreshBrightnessAsync(true); }
+                    if (pendingBrightness.Count == 0) continue;
+                    var request = pendingBrightness.First();
+                    var feature = request.Key.Features.First(x => x.Definition.Code == 0x10);
+                    try
+                    {
+                        uint value = feature.FromPercent(request.Value);
+                        if (value != feature.Current) await service.SetAsync(request.Key, feature, value);
+                    }
+                    catch (Exception ex) { SetStatus("밝기 변경 실패 · " + ex.Message); }
+                    int current;
+                    if (pendingBrightness.TryGetValue(request.Key, out current) && current == request.Value) pendingBrightness.Remove(request.Key);
+                }
+            }
+            catch (Exception ex) { SetStatus("밝기 조회 실패 · " + ex.Message); pendingBrightness.Clear(); }
+            finally { applyingBrightness = false; }
         }
 
         private void ShowWindow() { Show(); if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal; Activate(); }
@@ -262,10 +395,12 @@ namespace MonitorControl
             if (!exitRequested && !demo && String.IsNullOrEmpty(previewDirectory)) { Hide(); return; }
             if (closing) return;
             closing = true;
+            pendingBrightness.Clear(); brightnessInput.Dispose(); updater.Dispose(); flyout.Shutdown();
+            if (settingsWindow != null) settingsWindow.Close();
             foreach (var row in rows) row.Stop();
             displayTimer.Stop(); IsEnabled = false; SetStatus("모니터 연결을 정리하고 있습니다…");
             SystemEvents.DisplaySettingsChanged -= OnDisplayChanged; SystemEvents.PowerModeChanged -= OnPowerChanged;
-            widgets.Dispose(); service.FeatureChanged -= OnFeatureChanged;
+            widgets.Dispose(); service.FeatureChanged -= OnFeatureChanged; service.FeatureChanging -= OnFeatureChanging;
             if (tray != null) { tray.Visible = false; tray.ContextMenuStrip.Dispose(); tray.Dispose(); trayIcon.Dispose(); }
             await Task.Run(delegate { service.Dispose(); });
             allowClose = true; Close();
@@ -292,6 +427,12 @@ namespace MonitorControl
             widgets.ShowManager(selected); await Task.Delay(150);
             var managerWindow = Application.Current.Windows.OfType<WidgetManagerWindow>().First(); managerWindow.UpdateLayout();
             RenderElement((FrameworkElement)managerWindow.Content, Path.Combine(previewDirectory, "widget-settings.png"));
+            managerWindow.Close();
+            ShowDisplaySettings(); await Task.Delay(150); settingsWindow.UpdateLayout();
+            RenderElement((FrameworkElement)settingsWindow.Content, Path.Combine(previewDirectory, "display-settings.png"));
+            settingsWindow.Close();
+            flyout.Bind(monitors); flyout.ShowPopup(); await Task.Delay(150); flyout.UpdateLayout();
+            RenderElement((FrameworkElement)flyout.Content, Path.Combine(previewDirectory, "brightness-popup.png"));
             Close();
         }
 

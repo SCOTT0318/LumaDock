@@ -12,6 +12,25 @@ namespace MonitorControl
         public int Version = 1;
         public List<WidgetPlacement> Widgets = new List<WidgetPlacement>();
         public bool RestoreWidgets = true;
+        public List<MonitorPreference> Monitors = new List<MonitorPreference>();
+        public BrightnessPreferences Brightness = new BrightnessPreferences();
+        public bool CheckUpdatesOnStartup = true;
+    }
+
+    public sealed class MonitorPreference
+    {
+        public string MonitorId = "";
+        public string Alias = "";
+    }
+
+    public sealed class BrightnessPreferences
+    {
+        public bool Enabled;
+        public bool FollowWindows = true;
+        public bool UseHotkeys = true;
+        public string Mode = "all";
+        public List<string> SelectedMonitorIds = new List<string>();
+        public int StepPercent = 5;
     }
 
     public sealed class WidgetPlacement
@@ -138,7 +157,22 @@ namespace MonitorControl
 
         private static WidgetSettings Sanitize(WidgetSettings source)
         {
-            var result = new WidgetSettings { RestoreWidgets = source.RestoreWidgets };
+            var result = new WidgetSettings { RestoreWidgets = source.RestoreWidgets, CheckUpdatesOnStartup = source.CheckUpdatesOnStartup };
+            var knownMonitors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var monitor in (source.Monitors ?? new List<MonitorPreference>()).Where(x => x != null))
+            {
+                string id = Bounded(monitor.MonitorId, 512);
+                if (id.Length == 0 || !knownMonitors.Add(id)) continue;
+                if (result.Monitors.Count >= 64) break;
+                result.Monitors.Add(new MonitorPreference { MonitorId = id, Alias = Bounded(monitor.Alias, 80) });
+            }
+            var input = source.Brightness ?? new BrightnessPreferences();
+            result.Brightness = new BrightnessPreferences {
+                Enabled = input.Enabled, FollowWindows = input.FollowWindows, UseHotkeys = input.UseHotkeys,
+                Mode = input.Mode == "cursor" || input.Mode == "selected" ? input.Mode : "all",
+                StepPercent = Math.Max(1, Math.Min(20, input.StepPercent)),
+                SelectedMonitorIds = (input.SelectedMonitorIds ?? new List<string>()).Select(x => Bounded(x, 512)).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Take(32).ToList()
+            };
             var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var monitors = new Dictionary<string, WidgetPlacement>(StringComparer.OrdinalIgnoreCase);
             if (source.Widgets == null) return result;
