@@ -40,7 +40,7 @@ OutputDir={#OutputRoot}
 #ifdef TestBuild
 OutputBaseFilename=LumaDock-Setup-Test
 #else
-OutputBaseFilename=LumaDock-Setup-{#AppVersion}
+OutputBaseFilename=LumaDock-{#AppVersion}
 #endif
 SetupIconFile={#ProjectRoot}\assets\MonitorControl.ico
 UninstallDisplayIcon={app}\LumaDock.exe

@@ -1,6 +1,6 @@
 # LumaDock
 
-[**Windows 설치 파일 다운로드 · 0.0.1 Beta**](https://github.com/SCOTT0318/LumaDock/releases/download/v0.0.1/LumaDock-Setup-0.0.1.exe)
+[**Windows 설치 파일 다운로드 · 0.0.1 Beta**](https://github.com/SCOTT0318/LumaDock/releases/download/v0.0.1/LumaDock-0.0.1.exe)
 
 [릴리스 설명](https://github.com/SCOTT0318/LumaDock/releases/tag/v0.0.1) · [SHA-256 체크섬](https://github.com/SCOTT0318/LumaDock/releases/download/v0.0.1/SHA256SUMS.txt)
 
@@ -10,7 +10,7 @@ Windows 모니터 밝기·명암 제어와 바탕화면 위젯.
 
 ## 설치
 
-[0.0.1 베타 릴리스](https://github.com/SCOTT0318/LumaDock/releases/tag/v0.0.1)에서 `LumaDock-Setup-0.0.1.exe`를 내려받아 실행합니다.
+[0.0.1 베타 릴리스](https://github.com/SCOTT0318/LumaDock/releases/tag/v0.0.1)에서 `LumaDock-0.0.1.exe`를 내려받아 실행합니다.
 
 - 기본 위치: `C:\LumaDock`
 - 다른 부모 폴더 선택 시 그 아래 `LumaDock`을 만들어 설치합니다. 예: `D:\Apps` → `D:\Apps\LumaDock`

@@ -18,7 +18,7 @@ First build the application and `assets/MonitorControl.ico`, then run:
 .\build-installer.ps1 -Test
 ```
 
-Output: `artifacts/LumaDock-Setup-0.0.1.exe` (beta).
+Output: `artifacts/LumaDock-0.0.1.exe` (beta).
 
 The compiler is a build dependency only. The produced installer contains the application and does not download anything at installation time. Inno Setup's optional official portable mode can be used so the compiler need not be installed on the system:
 

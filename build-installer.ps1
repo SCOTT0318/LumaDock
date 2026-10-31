@@ -17,7 +17,7 @@ foreach ($requiredFile in @('bin\LumaDock.exe','bin\LumaDock.exe.config','assets
 $installerScript = Join-Path $projectRoot 'installer\LumaDock.iss'
 & $CompilerPath /Qp "/DProjectRoot=$projectRoot" "/DAppVersion=$version" $installerScript
 if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed.' }
-Write-Output "Built: $(Join-Path $projectRoot "artifacts\LumaDock-Setup-$version.exe")"
+Write-Output "Built: $(Join-Path $projectRoot "artifacts\LumaDock-$version.exe")"
 if ($Test) {
     & (Join-Path $projectRoot 'installer\TestInstaller.ps1') -CompilerPath $CompilerPath
 }
