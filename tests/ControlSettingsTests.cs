@@ -74,6 +74,10 @@ internal static class ControlSettingsTests
             Check(loaded.Monitors.Count == 2 && loaded.Monitors[0].Alias == "작업용 모니터", "Unicode monitor names persist across settings saves");
             Check(loaded.Brightness.Enabled && !loaded.Brightness.FollowWindows && !loaded.Brightness.UseHotkeys && loaded.Brightness.Mode == "selected" && loaded.Brightness.StepPercent == 10, "Brightness input preferences persist independently");
             Check(loaded.Brightness.SelectedMonitorIds.SequenceEqual(new[] { "panel-primary" }) && !loaded.CheckUpdatesOnStartup, "Fixed monitor selection and update preference survive persistence");
+            settings.StartWithWindows = false; settings.StartInTray = false; store.Save(settings); loaded = store.Load();
+            Check(!loaded.StartWithWindows && !loaded.StartInTray, "Disabled automatic and tray startup remain disabled after saving and loading");
+            settings.StartWithWindows = true; settings.StartInTray = true; store.Save(settings); loaded = store.Load();
+            Check(loaded.StartWithWindows && loaded.StartInTray, "Both startup options can be re-enabled and persisted");
             settings.Monitors = new List<MonitorPreference> { null, new MonitorPreference { MonitorId = " panel-left ", Alias = " " + new string('별', 100) + " " }, new MonitorPreference { MonitorId = "PANEL-LEFT", Alias = "duplicate" }, new MonitorPreference { MonitorId = " ", Alias = "empty" } };
             settings.Brightness.Mode = "unknown"; settings.Brightness.StepPercent = 999;
             settings.Brightness.SelectedMonitorIds = new List<string> { " panel-primary ", "PANEL-PRIMARY", "", null, "offline" };
@@ -88,6 +92,7 @@ internal static class ControlSettingsTests
             Check(loaded.Monitors.Count == 0 && loaded.Brightness != null && loaded.Brightness.StepPercent == 5, "Missing new preference groups become usable defaults");
             File.WriteAllText(path, "{\"Version\":1,\"RestoreWidgets\":false,\"Widgets\":[]}"); loaded = store.Load();
             Check(!loaded.RestoreWidgets && !loaded.Brightness.Enabled && loaded.Brightness.FollowWindows && loaded.Brightness.UseHotkeys && loaded.CheckUpdatesOnStartup, "Legacy widget-only settings load with non-disruptive keyboard defaults");
+            Check(loaded.StartWithWindows && loaded.StartInTray, "Legacy settings adopt automatic startup and tray-only launch defaults");
             settings = new WidgetSettings { Monitors = Enumerable.Range(0, 80).Select(x => new MonitorPreference { MonitorId = "monitor-" + x, Alias = "alias" }).ToList(),
                 Brightness = new BrightnessPreferences { SelectedMonitorIds = Enumerable.Range(0, 50).Select(x => "selected-" + x).ToList() } };
             store.Save(settings); loaded = store.Load();

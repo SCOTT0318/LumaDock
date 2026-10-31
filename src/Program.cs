@@ -53,8 +53,19 @@ namespace MonitorControl
                 bool created;
                 using (var instance = new Mutex(true, @"Local\LumaDock.App", out created))
                 {
-                    if (!created) { AppIdentity.ShowExisting(); return 0; }
-                    try { return app.Run(new MainWindow(false, null)); }
+                    bool background = args.Contains("--background");
+                    if (!created) { if (!background) AppIdentity.ShowExisting(); return 0; }
+                    try
+                    {
+                        var window = new MainWindow(false, null, background);
+                        if (window.StartupToTray)
+                        {
+                            app.MainWindow = window;
+                            window.StartBackground();
+                            return app.Run();
+                        }
+                        return app.Run(window);
+                    }
                     finally { instance.ReleaseMutex(); }
                 }
             }

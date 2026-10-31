@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.0.1"
 #endif
 #ifndef ProjectRoot
   #define ProjectRoot SourcePath + ".."
@@ -196,3 +196,24 @@ begin
   if not Result then
     MsgBox('LumaDock을 실행하려면 .NET Framework 4.8 이상이 필요합니다.' + #13#10 + 'Windows 업데이트 또는 Microsoft 공식 .NET Framework 설치 프로그램으로 설치한 뒤 다시 실행해 주세요.', mbError, MB_OK);
 end;
+
+#ifndef TestBuild
+procedure RemoveOwnedStartupValue(Root: Integer);
+var
+  Command, Expected: String;
+begin
+  Expected := '"' + ExpandConstant('{app}\LumaDock.exe') + '" --background';
+  if RegQueryStringValue(Root, 'Software\Microsoft\Windows\CurrentVersion\Run', 'LumaDock', Command) and
+     (CompareText(Trim(Command), Expected) = 0) then
+    RegDeleteValue(Root, 'Software\Microsoft\Windows\CurrentVersion\Run', 'LumaDock');
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    if IsWin64 then RemoveOwnedStartupValue(HKCU64);
+    RemoveOwnedStartupValue(HKCU);
+  end;
+end;
+#endif

@@ -157,7 +157,7 @@ namespace MonitorControl
             this.stagingDirectory = Path.GetFullPath(stagingDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LumaDock", "Updates"));
         }
 
-        public async Task CheckAsync(bool silent = false)
+        public async Task CheckAsync(bool silent = false, bool showAvailable = true)
         {
             if (disposed) return;
             if (dialog != null) { if (!silent) { dialog.Show(); dialog.Activate(); } return; }
@@ -170,7 +170,7 @@ namespace MonitorControl
                 var release = UpdateProtocol.ParseRelease(json);
                 if (disposed) return;
                 bool newer = UpdateProtocol.IsNewer(release.Version, CurrentVersion);
-                if (newer || !silent) ShowDialog(newer ? release : null, newer ? "새 버전을 사용할 수 있습니다." : "최신 버전입니다.");
+                if ((newer && showAvailable) || !silent) ShowDialog(newer ? release : null, newer ? "새 버전을 사용할 수 있습니다." : "최신 버전입니다.");
             }
             catch (OperationCanceledException) { }
             catch (Exception ex) { if (!silent && !disposed) ShowDialog(null, "업데이트 확인 실패\n" + FriendlyError(ex)); }

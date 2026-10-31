@@ -23,7 +23,7 @@ namespace MonitorControl
         private readonly Dictionary<string, bool> targetDrafts = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, MonitorDevice> knownMonitors = new Dictionary<string, MonitorDevice>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> supportedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        private readonly CheckBox enabled, followWindows, hotkeys, checkOnStartup;
+        private readonly CheckBox enabled, followWindows, hotkeys, checkOnStartup, startWithWindows, startInTray;
         private readonly ComboBox mode;
         private readonly Slider step;
         private readonly TextBlock stepValue, message;
@@ -82,6 +82,14 @@ namespace MonitorControl
             AutomationProperties.SetName(step, "밝기 조절 단계"); step.ValueChanged += delegate { UpdateStepLabel(); }; body.Children.Add(step); UpdateStepLabel();
             var limits = new Grid(); limits.ColumnDefinitions.Add(new ColumnDefinition()); limits.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); limits.Children.Add(Label("1%", 9, "#657F91")); var maximum = Label("20%", 9, "#657F91"); Grid.SetColumn(maximum, 1); limits.Children.Add(maximum); body.Children.Add(limits);
             enabled.Checked += delegate { UpdateInputState(); }; enabled.Unchecked += delegate { UpdateInputState(); }; mode.SelectionChanged += delegate { UpdateInputState(); }; UpdateInputState();
+
+            Divider(body); Section(body, "실행");
+            startWithWindows = Check("Windows 시작 시 자동 실행", "Windows 시작 시 자동 실행");
+            startWithWindows.IsChecked = settings.StartWithWindows; startWithWindows.Margin = new Thickness(0, 0, 0, 13);
+            startWithWindows.ToolTip = "현재 Windows 사용자로 로그인하면 트레이에서 실행합니다."; body.Children.Add(startWithWindows);
+            startInTray = Check("트레이에서 시작", "트레이에서 시작");
+            startInTray.IsChecked = settings.StartInTray;
+            startInTray.ToolTip = "직접 실행할 때도 적용합니다. Windows 자동 실행은 항상 트레이에서 시작합니다."; body.Children.Add(startInTray);
 
             Divider(body); Section(body, "업데이트");
             var updateLine = new Grid(); updateLine.ColumnDefinitions.Add(new ColumnDefinition()); updateLine.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); body.Children.Add(updateLine);
@@ -210,11 +218,14 @@ namespace MonitorControl
                 if (alias.Length > 0) preferences.Add(new MonitorPreference { MonitorId = item.Key, Alias = alias });
             }
             var oldMonitors = settings.Monitors; var oldBrightness = settings.Brightness; bool oldCheck = settings.CheckUpdatesOnStartup;
+            bool oldStartWithWindows = settings.StartWithWindows, oldStartInTray = settings.StartInTray;
             settings.Monitors = preferences;
             settings.Brightness = new BrightnessPreferences { Enabled = active, FollowWindows = followWindows.IsChecked == true, Mode = routing, SelectedMonitorIds = selected.ToList(), StepPercent = (int)Math.Round(step.Value), UseHotkeys = hotkeys.IsChecked == true };
             settings.CheckUpdatesOnStartup = checkOnStartup.IsChecked == true;
+            settings.StartWithWindows = startWithWindows.IsChecked == true;
+            settings.StartInTray = startInTray.IsChecked == true;
             try { if (save != null) save(); map.Refresh(); RefreshTargetLabels(); ShowMessage("저장됨", false); }
-            catch (Exception ex) { settings.Monitors = oldMonitors; settings.Brightness = oldBrightness; settings.CheckUpdatesOnStartup = oldCheck; ShowMessage(ex.Message, true); }
+            catch (Exception ex) { settings.Monitors = oldMonitors; settings.Brightness = oldBrightness; settings.CheckUpdatesOnStartup = oldCheck; settings.StartWithWindows = oldStartWithWindows; settings.StartInTray = oldStartInTray; ShowMessage(ex.Message, true); }
         }
 
         private void ShowMessage(string text, bool error) { if (message != null) { message.Text = text; message.Foreground = Color(error ? "#F0B394" : "#8EA9BB"); } }

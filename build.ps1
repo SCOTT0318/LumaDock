@@ -32,7 +32,7 @@ if ($Test) {
     if ($LASTEXITCODE -ne 0) { throw 'Settings test build failed.' }
     & $settingsTestPath (Join-Path $projectRoot 'artifacts\settings-tests')
     if ($LASTEXITCODE -ne 0) { throw 'Settings tests failed.' }
-    foreach ($suite in @('BrightnessInput', 'AppUpdater', 'ControlSettings')) {
+    foreach ($suite in @('BrightnessInput', 'AppUpdater', 'ControlSettings', 'StartupRegistration')) {
         $suitePath = Join-Path $outputDirectory ($suite + '.Tests.exe')
         & $compilerPath /nologo /utf8output /codepage:65001 /langversion:5 /target:exe "/out:$suitePath" "/reference:$applicationPath" @references (Join-Path $projectRoot ('tests\' + $suite + 'Tests.cs'))
         if ($LASTEXITCODE -ne 0) { throw "$suite test build failed." }
@@ -57,4 +57,12 @@ if ($Test) {
     $displayProcess = Start-Process -FilePath $displayTestPath -ArgumentList ('"{0}"' -f $displayResults) -WindowStyle Hidden -Wait -PassThru
     Get-Content -LiteralPath $displayResults
     if ($displayProcess.ExitCode -ne 0) { throw 'Display feature UI tests failed.' }
+    $trayStartupTestPath = Join-Path $outputDirectory 'TrayStartup.Tests.exe'
+    & $compilerPath /nologo /utf8output /codepage:65001 /langversion:5 /target:winexe "/out:$trayStartupTestPath" "/reference:$applicationPath" @references (Join-Path $projectRoot 'tests\TrayStartupTests.cs')
+    if ($LASTEXITCODE -ne 0) { throw 'Tray startup test build failed.' }
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'App.config') -Destination ($trayStartupTestPath + '.config') -Force
+    $trayStartupResults = Join-Path $testArtifacts 'tray-startup-tests.txt'
+    $trayStartupProcess = Start-Process -FilePath $trayStartupTestPath -ArgumentList ('"{0}"' -f $trayStartupResults) -WindowStyle Hidden -Wait -PassThru
+    Get-Content -LiteralPath $trayStartupResults
+    if ($trayStartupProcess.ExitCode -ne 0) { throw 'Tray startup UI tests failed.' }
 }

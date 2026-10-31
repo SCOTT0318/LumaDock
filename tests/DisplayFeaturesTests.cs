@@ -92,14 +92,23 @@ internal static class DisplayFeaturesTests
         var widget = Application.Current.Windows.Cast<Window>().Single(x => x.Title.StartsWith("LumaDock 위젯"));
         var editor = OpenSettings(view);
         Check(editor.IsVisible && editor.Title == "설정 · LumaDock", "The settings action opens the monitor and brightness settings window");
+        Check(Named<CheckBox>(editor, "Windows 시작 시 자동 실행").IsChecked == true && Named<CheckBox>(editor, "트레이에서 시작").IsChecked == true, "Startup settings expose the default automatic and tray-only launch options");
+        Named<CheckBox>(editor, "Windows 시작 시 자동 실행").IsChecked = false;
+        Named<CheckBox>(editor, "트레이에서 시작").IsChecked = false;
+        Check(Settings().StartWithWindows && Settings().StartInTray, "Changing startup checkboxes does not apply their draft values before saving");
         Check(Descendants<Button>(editor).Count(x => AutomationProperties.GetName(x).StartsWith("모니터 식별 ")) == monitors.Count, "Every connected monitor has an explicit identify action");
         var alias = Named<TextBox>(editor, "모니터 이름 DISPLAY1"); alias.Text = "왼쪽 작업";
         Check(first.Name == originalName && placement.MonitorName == originalName && !Settings().Monitors.Any(x => x.Alias == "왼쪽 작업"), "Alias drafts do not change monitor names or widgets before saving");
         Click(editor, "디스플레이 설정 저장"); widget.UpdateLayout();
         Check(first.Name == "왼쪽 작업" && first.HardwareName == originalName, "Saving a custom name preserves the original hardware model");
+        Check(!Settings().StartWithWindows && !Settings().StartInTray, "Saving settings applies both startup options together");
         Check(((TextBlock)view.FindName("DeviceTitle")).Text == "왼쪽 작업" && Descendants<Button>(view).Any(x => AutomationProperties.GetName(x) == "왼쪽 작업 모니터 선택"), "Saved monitor names update both the main heading and sidebar");
         Check(placement.MonitorName == "왼쪽 작업" && widget.Title == "LumaDock 위젯 · 왼쪽 작업" && Descendants<TextBlock>(widget).Any(x => x.Text == "왼쪽 작업"), "Saved monitor names update the live widget and its placement label");
-        alias.Text = ""; Click(editor, "디스플레이 설정 저장");
+        alias.Text = "";
+        Named<CheckBox>(editor, "Windows 시작 시 자동 실행").IsChecked = true;
+        Named<CheckBox>(editor, "트레이에서 시작").IsChecked = true;
+        Click(editor, "디스플레이 설정 저장");
+        Check(Settings().StartWithWindows && Settings().StartInTray, "Startup options can be re-enabled through settings");
         Check(first.Name == originalName && first.HardwareName == originalName && !Settings().Monitors.Any(x => x.MonitorId == first.Id), "Clearing a custom name restores the hardware name and removes its alias preference");
 
         Named<CheckBox>(editor, "키보드 밝기 조절 사용").IsChecked = true;
@@ -114,12 +123,15 @@ internal static class DisplayFeaturesTests
         Named<ComboBox>(editor, "밝기 조절 대상").SelectedValue = "selected";
         Named<CheckBox>(editor, "밝기 대상 DISPLAY2").IsChecked = true;
         Named<Slider>(editor, "밝기 조절 단계").Value = 11;
+        Named<CheckBox>(editor, "Windows 시작 시 자동 실행").IsChecked = false;
+        Named<CheckBox>(editor, "트레이에서 시작").IsChecked = false;
         Invoke(editor, "RefreshConnectedMonitors", monitors.Where(x => x.Id != "demo-2").ToList()); editor.UpdateLayout();
         Check(Named<TextBox>(editor, "모니터 이름 DISPLAY1").Text == "연결 변경 전 초안" && Named<CheckBox>(editor, "밝기 대상 DISPLAY2").IsChecked == true && !Named<CheckBox>(editor, "밝기 대상 DISPLAY2").IsEnabled, "Disconnecting a monitor preserves unsaved names and selected targets in an offline row");
         await (Task)Invoke(window, "RefreshAsync");
         monitors = Field<List<MonitorDevice>>("monitors"); first = monitors[0]; editor.UpdateLayout();
         Check(Named<TextBox>(editor, "모니터 이름 DISPLAY1").Text == "연결 변경 전 초안" && Named<CheckBox>(editor, "밝기 대상 DISPLAY2").IsChecked == true && Named<CheckBox>(editor, "밝기 대상 DISPLAY2").IsEnabled && Named<Slider>(editor, "밝기 조절 단계").Value == 11, "A real app rescan refreshes the open settings window without discarding drafts");
         Check(!Settings().Monitors.Any(x => x.Alias == "연결 변경 전 초안") && Settings().Brightness.Mode == "all" && Settings().Brightness.StepPercent == 7, "Connection refresh never persists drafts as a side effect");
+        Check(Named<CheckBox>(editor, "Windows 시작 시 자동 실행").IsChecked == false && Named<CheckBox>(editor, "트레이에서 시작").IsChecked == false && Settings().StartWithWindows && Settings().StartInTray, "Display reconnection preserves unsaved startup choices without applying them");
         alias = Named<TextBox>(editor, "모니터 이름 DISPLAY1"); alias.Text = "";
         Named<ComboBox>(editor, "밝기 조절 대상").SelectedValue = "all"; Named<Slider>(editor, "밝기 조절 단계").Value = 7;
         Named<CheckBox>(editor, "밝기 대상 DISPLAY2").IsChecked = false; Click(editor, "디스플레이 설정 저장");
@@ -144,8 +156,11 @@ internal static class DisplayFeaturesTests
         foreach (var monitor in monitors) Named<CheckBox>(editor, "밝기 대상 " + monitor.Display).IsChecked = false;
         alias.Text = "저장되면 안 되는 이름"; Click(editor, "디스플레이 설정 저장");
         Check(Settings().Brightness.Mode == "cursor" && first.Name == originalName, "A missing fixed target rejects the save without partially changing monitor names");
+        Named<CheckBox>(editor, "Windows 시작 시 자동 실행").IsChecked = true;
+        Named<CheckBox>(editor, "트레이에서 시작").IsChecked = true;
         editor.Close(); await WaitFor(() => Field<Window>("settingsWindow") == null);
         Check(first.Name == originalName && Settings().Brightness.Mode == "cursor", "Closing invalid or unsaved settings preserves the last saved configuration");
+        Check(!Settings().StartWithWindows && !Settings().StartInTray, "Closing settings discards unsaved changes to automatic and tray startup");
 
         editor = OpenSettings(view); Named<TextBox>(editor, "모니터 이름 DISPLAY1").Text = "작업용"; Click(editor, "디스플레이 설정 저장"); editor.Close();
         var tray = Field<System.Windows.Forms.NotifyIcon>("tray");

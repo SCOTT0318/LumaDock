@@ -14,6 +14,7 @@
     <Reference Include="System.Web.Extensions"/><Reference Include="WindowsBase"/><Reference Include="PresentationCore"/><Reference Include="PresentationFramework"/>
     <Compile Include="src\AssemblyInfo.cs"/><Compile Include="src\AppIdentity.cs"/><Compile Include="src\WidgetSettings.cs"/><Compile Include="src\WidgetWindows.cs"/><Compile Include="src\WidgetManagerWindow.cs"/><Compile Include="src\Capabilities.cs"/><Compile Include="src\NativeMethods.cs"/><Compile Include="src\MonitorService.cs"/><Compile Include="src\MainWindow.cs"/><Compile Include="src\Program.cs"/>
     <Compile Include="src\BrightnessInput.cs"/><Compile Include="src\BrightnessRouting.cs"/><Compile Include="src\BrightnessFlyout.cs"/><Compile Include="src\DisplaySettingsWindow.cs"/><Compile Include="src\AppUpdater.cs"/>
+    <Compile Include="src\StartupRegistration.cs"/>
     <EmbeddedResource Include="src\MainView.xaml"><LogicalName>MonitorControl.MainView.xaml</LogicalName></EmbeddedResource>
     <EmbeddedResource Include="assets\MonitorControl.ico"><LogicalName>MonitorControl.ico</LogicalName></EmbeddedResource>
     <None Include="App.config"/><None Include="app.manifest"/>

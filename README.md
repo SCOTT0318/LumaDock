@@ -1,16 +1,16 @@
 # LumaDock
 
-[**Windows 설치 파일 다운로드 · 1.0.0**](https://github.com/SCOTT0318/LumaDock/releases/download/v1.0.0/LumaDock-1.0.0.exe)
+[**Windows 설치 파일 다운로드 · 1.0.1**](https://github.com/SCOTT0318/LumaDock/releases/download/v1.0.1/LumaDock-1.0.1.exe)
 
-[릴리스 설명](https://github.com/SCOTT0318/LumaDock/releases/tag/v1.0.0) · [SHA-256 체크섬](https://github.com/SCOTT0318/LumaDock/releases/download/v1.0.0/SHA256SUMS.txt)
+[릴리스 설명](https://github.com/SCOTT0318/LumaDock/releases/tag/v1.0.1) · [SHA-256 체크섬](https://github.com/SCOTT0318/LumaDock/releases/download/v1.0.1/SHA256SUMS.txt)
 
 Windows 모니터 밝기·명암 제어와 바탕화면 위젯.
 
-현재 버전: **1.0.0**
+현재 버전: **1.0.1**
 
 ## 설치
 
-[1.0.0 릴리스](https://github.com/SCOTT0318/LumaDock/releases/tag/v1.0.0)에서 `LumaDock-1.0.0.exe`를 내려받아 실행합니다. 처음 업데이트할 때는 트레이 메뉴의 **종료**로 기존 앱을 닫으세요.
+[1.0.1 릴리스](https://github.com/SCOTT0318/LumaDock/releases/tag/v1.0.1)에서 `LumaDock-1.0.1.exe`를 내려받아 실행합니다. 처음 업데이트할 때는 트레이 메뉴의 **종료**로 기존 앱을 닫으세요.
 
 - 기본 위치: `C:\LumaDock`
 - 다른 부모 폴더 선택 시 그 아래 `LumaDock`을 만들어 설치합니다. 예: `D:\Apps` → `D:\Apps\LumaDock`
@@ -31,6 +31,8 @@ Windows 모니터 밝기·명암 제어와 바탕화면 위젯.
 **설정 → 키보드 밝기 조절**을 켜고 대상을 **모두 함께 / 마우스가 있는 모니터 / 선택한 모니터만** 중 고릅니다. 기본 단축키는 **Ctrl+Alt+↑/↓**입니다. Windows 밝기 변경과 표준 HID 밝기 키도 연동할 수 있습니다. Fn 키는 키보드·펌웨어가 Windows에 입력을 노출하는 경우에 동작하며, 일부 기기는 내장 화면의 밝기도 자체적으로 변경합니다. 원하는 모니터만 정확하게 조절하려면 기본 단축키를 사용하세요.
 
 **업데이트 확인**에서 새 버전을 확인하고 **다운로드 및 설치**로 업데이트합니다. 설정에서 시작 시 자동 확인을 끌 수 있습니다. 다운로드는 GitHub 공개 릴리스에서 가져오며 SHA-256 체크섬 검증 후 앱을 종료하고 같은 설치 위치에 설치 프로그램을 엽니다.
+
+**설정 → 실행**에서 **Windows 시작 시 자동 실행**을 켜고 끕니다. 기본값은 켜짐이며 현재 사용자의 Windows 로그인에만 적용됩니다. 자동 실행은 본창 없이 트레이에서 시작합니다. **트레이에서 시작**을 켜면 직접 실행할 때도 본창을 표시하지 않습니다. 트레이 오른쪽 메뉴의 **LumaDock 열기**로 본창을 엽니다. 이미 실행 중일 때 바로가기를 다시 실행해도 본창을 열 수 있습니다. 기존 위젯은 지정한 복원 설정을 따릅니다.
 
 **위젯**에서 모니터와 밝기·명암·볼륨 표시 항목을 선택합니다. 위젯 제목 부분을 드래그해 배치하며, 테마·항상 위에 표시·위치 잠금·앱 실행 시 복원을 설정할 수 있습니다. 위젯은 독립된 바탕화면 패널입니다. 모니터를 다시 연결하면 해당 위젯도 복원됩니다.
 

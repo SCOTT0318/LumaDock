@@ -10,6 +10,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Markup;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -38,8 +39,11 @@ namespace MonitorControl
         private readonly DispatcherTimer displayTimer;
         private bool refreshing, refreshAgain, closing, allowClose, exitRequested;
         private readonly string previewDirectory;
+        private readonly bool startupToTray;
+        private bool startupInitialized;
+        public bool StartupToTray { get { return startupToTray; } }
 
-        public MainWindow(bool demoMode, string preview)
+        public MainWindow(bool demoMode, string preview, bool startInTray = false)
         {
             demo = demoMode;
             previewDirectory = preview;
@@ -53,6 +57,7 @@ namespace MonitorControl
                 view = (Grid)XamlReader.Load(stream);
             Content = view;
             widgets = new WidgetManager(this, service, view.Resources, RefreshAsync, SetStatus, !demo && String.IsNullOrEmpty(previewDirectory));
+            startupToTray = startInTray || (!demo && String.IsNullOrEmpty(previewDirectory) && widgets.Settings.StartInTray);
             brightnessInput = new BrightnessInput(this, OnBrightnessDelta, SetStatus, demo);
             updater = new AppUpdater(this, demo, RequestExit);
             flyout = new BrightnessFlyout(service, view.Resources, SetStatus, RefreshAsync, ShowWindow, ShowDisplaySettings);
@@ -73,12 +78,36 @@ namespace MonitorControl
             SystemEvents.DisplaySettingsChanged += OnDisplayChanged;
             SystemEvents.PowerModeChanged += OnPowerChanged;
             SetupTray();
-            Loaded += async delegate {
-                await RefreshAsync();
-                if (!String.IsNullOrEmpty(previewDirectory)) await RenderPreviews();
-                else if (!demo && widgets.Settings.CheckUpdatesOnStartup) await updater.CheckAsync(true);
-            };
+            Loaded += async delegate { await InitializeAsync(); };
             Closing += OnClosing;
+        }
+
+        public void StartBackground()
+        {
+            new WindowInteropHelper(this).EnsureHandle();
+            Dispatcher.BeginInvoke(new Action(async delegate { await InitializeAsync(); }));
+        }
+
+        private async Task InitializeAsync()
+        {
+            if (startupInitialized || closing) return;
+            startupInitialized = true;
+            string startupError = null;
+            if (!demo)
+            {
+                try { ApplyStartupRegistration(); }
+                catch (Exception ex) { startupError = "Windows 자동 실행 설정 실패 · " + ex.Message; }
+            }
+            await RefreshAsync();
+            if (closing) return;
+            if (startupError != null) SetStatus(startupError);
+            if (!String.IsNullOrEmpty(previewDirectory)) await RenderPreviews();
+            else if (!demo && widgets.Settings.CheckUpdatesOnStartup) await updater.CheckAsync(true, !startupToTray);
+        }
+
+        private void ApplyStartupRegistration()
+        {
+            if (!demo) StartupRegistration.SetEnabled(widgets.Settings.StartWithWindows, Assembly.GetExecutingAssembly().Location);
         }
 
         private T Element<T>(string name) where T : FrameworkElement { return (T)view.FindName(name); }
@@ -294,6 +323,7 @@ namespace MonitorControl
             ShowWindow();
             if (settingsWindow != null) { settingsWindow.Activate(); return; }
             settingsWindow = new DisplaySettingsWindow(view.Resources, monitors, widgets.Settings, delegate {
+                ApplyStartupRegistration();
                 ApplyDisplayNames(); widgets.Save(); RenderMonitorList(); RenderFeatures(); widgets.Rebind(monitors);
                 pendingBrightness.Clear(); ConfigureBrightnessInput();
                 if (flyout.IsVisible) flyout.Bind(monitors);
