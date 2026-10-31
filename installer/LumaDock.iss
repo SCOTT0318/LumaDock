@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.0.1"
+  #define AppVersion "0.0.2"
 #endif
 #ifndef ProjectRoot
   #define ProjectRoot SourcePath + ".."
@@ -58,7 +58,11 @@ WizardSizePercent=115
 WizardImageStretch=yes
 WizardResizable=no
 CloseApplications=no
+#ifdef TestBuild
+AppMutex=Local\LumaDock.InstallerTests
+#else
 AppMutex=Local\LumaDock.App
+#endif
 RestartApplications=no
 ChangesAssociations=no
 ChangesEnvironment=no

@@ -54,39 +54,91 @@ namespace MonitorControl
                 initialized = true;
                 if (Settings.RestoreWidgets) foreach (var placement in Settings.Widgets) Open(placement);
             }
-            foreach (var pair in windows) pair.Value.Bind(monitors.FirstOrDefault(x => x.Id == pair.Value.Placement.MonitorId));
+            foreach (var pair in windows) pair.Value.Bind(FindMonitor(pair.Value.Placement.MonitorId));
             if (editor != null) { editor.IsEnabled = true; editor.RefreshMonitors(); }
         }
 
         internal void ShowManager(MonitorDevice preferred)
         {
-            if (editor != null) { editor.Show(); editor.Activate(); return; }
-            editor = new WidgetManagerWindow(this, resources, preferred) { Owner = owner };
-            editor.Closed += delegate { editor = null; };
-            editor.Show();
+            if (disposed) return;
+            if (!owner.IsVisible) owner.Show();
+            if (owner.WindowState == WindowState.Minimized) owner.WindowState = WindowState.Normal;
+            if (editor == null)
+            {
+                editor = new WidgetManagerWindow(this, resources, preferred) { Owner = owner };
+                editor.Closed += delegate { editor = null; };
+            }
+            else if (preferred != null) editor.SelectMonitor(preferred.Id);
+            editor.Show(); editor.Activate();
+        }
+
+        internal void ShowWidgetSettings(string placementId)
+        {
+            var placement = Settings.Widgets.FirstOrDefault(x => x.Id == placementId);
+            if (placement == null) return;
+            ShowManager(null);
+            if (editor != null) editor.SelectMonitor(placement.MonitorId);
+        }
+
+        internal WidgetPlacement FindByMonitor(string monitorId)
+        {
+            if (String.IsNullOrWhiteSpace(monitorId)) return null;
+            return Settings.Widgets.FirstOrDefault(x => String.Equals(x.MonitorId, monitorId.Trim(), StringComparison.OrdinalIgnoreCase));
+        }
+
+        private MonitorDevice FindMonitor(string monitorId)
+        {
+            return monitors.FirstOrDefault(x => String.Equals(x.Id, monitorId, StringComparison.OrdinalIgnoreCase));
         }
 
         internal void Add(WidgetPlacement placement)
         {
+            ValidatePlacement(placement);
+            if (FindByMonitor(placement.MonitorId) != null) throw new InvalidOperationException("이미 추가된 모니터입니다. 기존 위젯의 설정을 수정하세요.");
             if (Settings.Widgets.Count >= SettingsStore.MaximumWidgets) throw new InvalidOperationException("위젯은 최대 32개까지 배치할 수 있습니다.");
-            if (Settings.Widgets.Any(x => x.Id == placement.Id)) throw new InvalidOperationException("이미 존재하는 위젯입니다.");
-            Settings.Widgets.Add(placement); Open(placement); Save();
+            if (Settings.Widgets.Any(x => String.Equals(x.Id, placement.Id, StringComparison.OrdinalIgnoreCase))) throw new InvalidOperationException("이미 존재하는 위젯입니다.");
+            hidden = false;
+            Settings.Widgets.Add(placement);
+            try { Open(placement); }
+            catch { Settings.Widgets.Remove(placement); throw; }
+            Save();
             status("위젯 추가됨");
+        }
+
+        private static void ValidatePlacement(WidgetPlacement placement)
+        {
+            if (placement == null) throw new ArgumentNullException("placement");
+            if (String.IsNullOrWhiteSpace(placement.Id) || String.IsNullOrWhiteSpace(placement.MonitorId)) throw new InvalidOperationException("모니터를 선택하세요.");
+            if (!placement.ShowBrightness && !placement.ShowContrast && !placement.ShowVolume) throw new InvalidOperationException("표시할 조절 항목을 하나 이상 선택하세요.");
         }
 
         private void Open(WidgetPlacement placement)
         {
             if (windows.ContainsKey(placement.Id)) return;
-            var window = new DesktopWidget(service, placement, resources, refresh, status, ScheduleSave, Remove, ShowManager);
+            var window = new DesktopWidget(service, placement, resources, refresh, status, ScheduleSave, Remove, ShowWidgetSettings);
             windows.Add(placement.Id, window);
-            window.Bind(monitors.FirstOrDefault(x => x.Id == placement.MonitorId));
-            window.Show(); if (hidden) window.Hide();
+            try
+            {
+                window.Bind(FindMonitor(placement.MonitorId));
+                window.Show(); if (hidden) window.Hide();
+            }
+            catch { windows.Remove(placement.Id); window.Shutdown(); throw; }
         }
 
         internal void Update(WidgetPlacement placement)
         {
+            ValidatePlacement(placement);
+            var stored = Settings.Widgets.FirstOrDefault(x => x.Id == placement.Id);
+            if (stored == null) throw new InvalidOperationException("위젯을 찾지 못했습니다.");
+            var duplicate = FindByMonitor(placement.MonitorId);
+            if (duplicate != null && duplicate.Id != stored.Id) throw new InvalidOperationException("이미 추가된 모니터입니다. 기존 위젯의 설정을 수정하세요.");
+            // Keep the same model instance used by the floating window. Layout edits
+            // must not overwrite a newer position captured while the form was open.
+            stored.MonitorId = placement.MonitorId.Trim(); stored.MonitorName = placement.MonitorName;
+            stored.ShowBrightness = placement.ShowBrightness; stored.ShowContrast = placement.ShowContrast; stored.ShowVolume = placement.ShowVolume;
+            stored.AlwaysOnTop = placement.AlwaysOnTop; stored.Locked = placement.Locked; stored.Theme = placement.Theme == "light" ? "light" : "dark";
             DesktopWidget window;
-            if (windows.TryGetValue(placement.Id, out window)) window.Bind(monitors.FirstOrDefault(x => x.Id == placement.MonitorId), true);
+            if (windows.TryGetValue(stored.Id, out window)) window.Bind(FindMonitor(stored.MonitorId), true);
             Save();
         }
 
@@ -95,7 +147,7 @@ namespace MonitorControl
             DesktopWidget window;
             if (windows.TryGetValue(id, out window)) { windows.Remove(id); window.Shutdown(); }
             Settings.Widgets.RemoveAll(x => x.Id == id); Save();
-            if (editor != null) editor.RenderList();
+            if (editor != null) editor.RefreshMonitors();
         }
 
         internal void Reveal(string id)
@@ -140,16 +192,17 @@ namespace MonitorControl
         private readonly Action<string> report;
         private readonly Action changed;
         private readonly Action<string> remove;
-        private readonly Action<MonitorDevice> configure;
+        private readonly Action<string> configure;
         private readonly List<FeatureRow> rows = new List<FeatureRow>();
         private readonly StackPanel body;
         private readonly Border card;
         private readonly TextBlock title, subtitle, footnote;
         private readonly Button pin, more, close;
+        private readonly Grid header;
         private MonitorDevice device;
         private bool shuttingDown, positioned;
 
-        internal DesktopWidget(MonitorService monitorService, WidgetPlacement placement, ResourceDictionary styles, Func<Task> rescan, Action<string> status, Action onChanged, Action<string> onRemove, Action<MonitorDevice> settings)
+        internal DesktopWidget(MonitorService monitorService, WidgetPlacement placement, ResourceDictionary styles, Func<Task> rescan, Action<string> status, Action onChanged, Action<string> onRemove, Action<string> settings)
         {
             service = monitorService; Placement = placement; refresh = rescan; report = status; changed = onChanged; remove = onRemove; configure = settings;
             Title = "LumaDock 위젯 · " + placement.MonitorName; Width = 364; SizeToContent = SizeToContent.Height;
@@ -160,7 +213,7 @@ namespace MonitorControl
                 Effect = new DropShadowEffect { BlurRadius = 18, ShadowDepth = 3, Opacity = 0.28, Color = Colors.Black } };
             var canvas = new Grid { Background = Brushes.Transparent }; canvas.Children.Add(card); Content = canvas;
             var layout = new StackPanel(); card.Child = layout;
-            var header = new Grid { Background = Brushes.Transparent, Margin = new Thickness(2, 0, 0, 12), Cursor = Cursors.SizeAll };
+            header = new Grid { Background = Brushes.Transparent, Margin = new Thickness(2, 0, 0, 12), Cursor = Cursors.SizeAll };
             header.ColumnDefinitions.Add(new ColumnDefinition()); header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             var heading = new StackPanel(); header.Children.Add(heading);
             title = MainWindow.Text(placement.MonitorName, 13, "#E7F1F6"); title.FontWeight = FontWeights.SemiBold; title.MaxWidth = 185; title.TextTrimming = TextTrimming.CharacterEllipsis;
@@ -170,7 +223,7 @@ namespace MonitorControl
             pin = TinyButton("↟", "항상 위에 표시 전환");
             pin.Click += delegate { Placement.AlwaysOnTop = !Placement.AlwaysOnTop; Topmost = Placement.AlwaysOnTop; ApplyTheme(); changed(); };
             actions.Children.Add(pin);
-            more = TinyButton("⋯", "위젯 설정"); more.Click += delegate { configure(device); }; actions.Children.Add(more);
+            more = TinyButton("⋯", "위젯 설정"); more.Click += delegate { configure(Placement.Id); }; actions.Children.Add(more);
             close = TinyButton("×", "이 위젯 제거"); close.Click += delegate { remove(Placement.Id); }; actions.Children.Add(close);
             header.MouseLeftButtonDown += delegate(object sender, MouseButtonEventArgs e) {
                 if (Placement.Locked || e.OriginalSource is Button || FindButton(e.OriginalSource as DependencyObject)) return;
@@ -213,6 +266,8 @@ namespace MonitorControl
             more.Foreground = close.Foreground = MainWindow.Brush(light ? "#315462" : "#B2C8D4");
             footnote.Text = Placement.Locked ? "위치 잠김" : "";
             footnote.Visibility = Placement.Locked ? Visibility.Visible : Visibility.Collapsed;
+            header.Cursor = Placement.Locked ? Cursors.Arrow : Cursors.SizeAll;
+            AutomationProperties.SetHelpText(header, Placement.Locked ? "위치 잠김" : "드래그로 위치 이동");
         }
 
         internal void Bind(MonitorDevice monitor, bool flushPending = false)
@@ -221,6 +276,7 @@ namespace MonitorControl
             body.IsEnabled = true;
             Topmost = Placement.AlwaysOnTop; ApplyTheme();
             title.Text = monitor == null ? Placement.MonitorName : monitor.Name;
+            Title = "LumaDock 위젯 · " + title.Text;
             subtitle.Text = monitor == null ? "연결 대기" : monitor.Display + (monitor.Demo ? "  ·  DEMO" : "");
             if (monitor == null)
             {

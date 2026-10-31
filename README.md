@@ -1,16 +1,16 @@
 # LumaDock
 
-[**Windows 설치 파일 다운로드 · 0.0.1 Beta**](https://github.com/SCOTT0318/LumaDock/releases/download/v0.0.1/LumaDock-0.0.1.exe)
+[**Windows 설치 파일 다운로드 · 0.0.2 Beta**](https://github.com/SCOTT0318/LumaDock/releases/download/v0.0.2/LumaDock-0.0.2.exe)
 
-[릴리스 설명](https://github.com/SCOTT0318/LumaDock/releases/tag/v0.0.1) · [SHA-256 체크섬](https://github.com/SCOTT0318/LumaDock/releases/download/v0.0.1/SHA256SUMS.txt)
+[릴리스 설명](https://github.com/SCOTT0318/LumaDock/releases/tag/v0.0.2) · [SHA-256 체크섬](https://github.com/SCOTT0318/LumaDock/releases/download/v0.0.2/SHA256SUMS.txt)
 
 Windows 모니터 밝기·명암 제어와 바탕화면 위젯.
 
-현재 버전: **0.0.1 Beta**
+현재 버전: **0.0.2 Beta**
 
 ## 설치
 
-[0.0.1 베타 릴리스](https://github.com/SCOTT0318/LumaDock/releases/tag/v0.0.1)에서 `LumaDock-0.0.1.exe`를 내려받아 실행합니다.
+[0.0.2 베타 릴리스](https://github.com/SCOTT0318/LumaDock/releases/tag/v0.0.2)에서 `LumaDock-0.0.2.exe`를 내려받아 실행합니다. 업데이트 전에는 트레이 메뉴의 **종료**로 기존 앱을 닫으세요.
 
 - 기본 위치: `C:\LumaDock`
 - 다른 부모 폴더 선택 시 그 아래 `LumaDock`을 만들어 설치합니다. 예: `D:\Apps` → `D:\Apps\LumaDock`
@@ -26,6 +26,10 @@ Windows 모니터 밝기·명암 제어와 바탕화면 위젯.
 
 **위젯**에서 모니터와 밝기·명암·볼륨 표시 항목을 선택합니다. 위젯 제목 부분을 드래그해 배치하며, 테마·항상 위에 표시·위치 잠금·앱 실행 시 복원을 설정할 수 있습니다. 위젯은 독립된 바탕화면 패널입니다. 모니터를 다시 연결하면 해당 위젯도 복원됩니다.
 
+위젯은 **모니터당 1개**입니다. 이미 추가한 모니터를 선택하면 기존 위젯의 설정이 열립니다. 목록에서 **위치 잠금·항상 위**를 바로 바꾸거나, **설정**에서 테마와 조절 항목을 수정하고 **변경 저장**을 누르세요. 저장 전 변경은 **되돌리기**로 취소합니다. 연결이 끊긴 모니터도 위치 잠금·테마 등의 설정을 수정할 수 있습니다.
+
+이전 버전에서 같은 모니터의 위젯을 여러 개 추가했다면 첫 위젯의 위치와 모양을 유지하고 표시 항목을 합쳐 1개로 정리합니다.
+
 오른쪽 아래 알림 영역의 모니터 아이콘에서 앱 열기, 위젯 설정·표시, 다시 검색, 종료를 사용할 수 있습니다. 본창의 X는 트레이로 숨기며, 종료는 트레이 메뉴에서 합니다. Windows 설정에 따라 아이콘이 숨김 영역에 배치될 수 있습니다.
 
 배치 설정과 오류 기록은 `%LocalAppData%\LumaDock`에 저장합니다. 밝기 등 하드웨어 값은 저장하거나 시작 시 덮어쓰지 않습니다. 여러 창의 조절 값은 동기화됩니다. 슬라이더는 마지막 조작 약 320ms 후 적용합니다.
@@ -35,6 +39,8 @@ Windows 모니터 밝기·명암 제어와 바탕화면 위젯.
 ![LumaDock](docs/images/lumadock.png)
 
 ![바탕화면 위젯](docs/images/widget.png)
+
+![위젯 설정](docs/images/widget-settings.png)
 
 ## 빌드
 

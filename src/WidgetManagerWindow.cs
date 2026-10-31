@@ -22,6 +22,7 @@ namespace MonitorControl
         private readonly ScrollViewer settingsScroll;
         private readonly Style checkStyle;
         private WidgetPlacement editing;
+        private string formMonitorId;
         private string preferredId;
         private string theme = "dark";
         private bool updating;
@@ -68,7 +69,7 @@ namespace MonitorControl
             body.Children.Add(Label("모니터", 11, "#9EB3C2"));
             monitorSelector = new ComboBox { DisplayMemberPath = "Label", SelectedValuePath = "Id", HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 9, 0, 18) };
             AutomationProperties.SetName(monitorSelector, "위젯 대상 모니터");
-            monitorSelector.SelectionChanged += delegate { if (!updating) UpdateSupportedFeatures(); };
+            monitorSelector.SelectionChanged += delegate { if (!updating) LoadSelectedMonitor(false); };
             body.Children.Add(monitorSelector);
 
             body.Children.Add(Label("표시할 조절 항목", 11, "#9EB3C2"));
@@ -78,6 +79,11 @@ namespace MonitorControl
             contrast = Check("명암", "명암 표시");
             volume = Check("볼륨", "볼륨 표시");
             var controlChecks = new[] { brightness, contrast, volume };
+            foreach (var control in controlChecks)
+            {
+                control.Checked += delegate { if (!updating) UpdateSaveButton(); };
+                control.Unchecked += delegate { if (!updating) UpdateSaveButton(); };
+            }
             for (int i = 0; i < controlChecks.Length; i++)
             {
                 var choice = new Border { Background = Color("#182833"), CornerRadius = new CornerRadius(9), BorderBrush = Color("#314754"), BorderThickness = new Thickness(1), Padding = new Thickness(13, 13, 8, 13), Margin = new Thickness(0, 0, i < 2 ? 8 : 0, 0), Child = controlChecks[i] };
@@ -118,8 +124,9 @@ namespace MonitorControl
             var footerLayout = new Grid(); footerLayout.ColumnDefinitions.Add(new ColumnDefinition()); footerLayout.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); footer.Child = footerLayout;
             message = Label("", 10, "#8BA5B7"); message.TextWrapping = TextWrapping.Wrap; message.VerticalAlignment = VerticalAlignment.Center; message.Margin = new Thickness(0, 0, 14, 0); footerLayout.Children.Add(message);
             var actions = new StackPanel { Orientation = Orientation.Horizontal }; Grid.SetColumn(actions, 1); footerLayout.Children.Add(actions);
-            cancelEdit = new Button { Content = "수정 취소", Visibility = Visibility.Collapsed, Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(12, 10, 12, 10), FontSize = 11 };
-            cancelEdit.Click += delegate { ResetEditor(); }; actions.Children.Add(cancelEdit);
+            cancelEdit = new Button { Content = "되돌리기", Visibility = Visibility.Collapsed, Margin = new Thickness(0, 0, 8, 0), Padding = new Thickness(12, 10, 12, 10), FontSize = 11 };
+            AutomationProperties.SetName(cancelEdit, "위젯 설정 되돌리기");
+            cancelEdit.Click += delegate { LoadSelectedMonitor(true); ShowMessage("", false); }; actions.Children.Add(cancelEdit);
             saveButton = new Button { Content = "위젯 추가", Padding = new Thickness(19, 10, 19, 10), FontSize = 11, Style = (Style)FindResource("PrimaryButton") };
             saveButton.Click += delegate { SaveWidget(); }; actions.Children.Add(saveButton);
 
@@ -182,30 +189,84 @@ namespace MonitorControl
             string selectedId = monitorSelector.SelectedValue as string ?? (editing == null ? preferredId : editing.MonitorId);
             updating = true;
             monitorSelector.Items.Clear();
+            var included = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var monitor in manager.Monitors)
-                monitorSelector.Items.Add(new MonitorOption { Id = monitor.Id, Device = monitor, Label = monitor.Name + "  ·  " + monitor.Display });
-            if (editing != null && !manager.Monitors.Any(x => x.Id == editing.MonitorId))
-                monitorSelector.Items.Add(new MonitorOption { Id = editing.MonitorId, Label = editing.MonitorName + "  ·  연결 대기" });
-            monitorSelector.SelectedValue = selectedId;
+            {
+                included.Add(monitor.Id);
+                monitorSelector.Items.Add(new MonitorOption { Id = monitor.Id, Device = monitor,
+                    Label = monitor.Name + "  ·  " + monitor.Display + (manager.FindByMonitor(monitor.Id) == null ? "" : "  ·  추가됨") });
+            }
+            foreach (var placement in manager.Settings.Widgets)
+                if (included.Add(placement.MonitorId))
+                    monitorSelector.Items.Add(new MonitorOption { Id = placement.MonitorId, Label = placement.MonitorName + "  ·  연결 대기" });
+            monitorSelector.SelectedItem = monitorSelector.Items.Cast<MonitorOption>().FirstOrDefault(x => SameId(x.Id, selectedId));
             if (monitorSelector.SelectedIndex < 0 && monitorSelector.Items.Count > 0) monitorSelector.SelectedIndex = 0;
             monitorSelector.IsEnabled = monitorSelector.Items.Count > 0;
             updating = false;
-            UpdateSupportedFeatures();
+            LoadSelectedMonitor(false);
+        }
+
+        internal void SelectMonitor(string monitorId)
+        {
+            if (String.IsNullOrWhiteSpace(monitorId)) return;
+            preferredId = monitorId;
+            var option = monitorSelector.Items.Cast<MonitorOption>().FirstOrDefault(x => SameId(x.Id, monitorId));
+            if (option == null)
+            {
+                RefreshMonitors();
+                option = monitorSelector.Items.Cast<MonitorOption>().FirstOrDefault(x => SameId(x.Id, monitorId));
+            }
+            if (option == null) return;
+            if (monitorSelector.SelectedItem != option) monitorSelector.SelectedItem = option;
+            else LoadSelectedMonitor(false);
+        }
+
+        private static bool SameId(string first, string second)
+        { return String.Equals(first, second, StringComparison.OrdinalIgnoreCase); }
+
+        private void LoadSelectedMonitor(bool reload)
+        {
+            var option = monitorSelector.SelectedItem as MonitorOption;
+            var saved = option == null ? null : manager.FindByMonitor(option.Id);
+            bool changed = !SameId(formMonitorId, option == null ? null : option.Id) || editing != saved;
+            editing = saved;
+            formMonitorId = option == null ? null : option.Id;
+            if (reload || changed)
+            {
+                updating = true;
+                brightness.IsChecked = saved == null ? true : saved.ShowBrightness;
+                contrast.IsChecked = saved != null && saved.ShowContrast;
+                volume.IsChecked = saved != null && saved.ShowVolume;
+                onTop.IsChecked = saved != null && saved.AlwaysOnTop;
+                locked.IsChecked = saved != null && saved.Locked;
+                SetTheme(saved == null ? "dark" : saved.Theme);
+                updating = false;
+                ShowMessage("", false);
+            }
+            formCaption.Text = editing == null ? "새 위젯" : "위젯 설정";
+            cancelEdit.Visibility = editing == null ? Visibility.Collapsed : Visibility.Visible;
+            UpdateSupportedFeatures(changed || reload);
             RenderList();
         }
 
-        private void UpdateSupportedFeatures()
+        private void UpdateSupportedFeatures(bool initializeNew)
         {
             var option = monitorSelector.SelectedItem as MonitorOption;
             var monitor = option == null ? null : option.Device;
             ConfigureCheck(brightness, monitor, 0x10); ConfigureCheck(contrast, monitor, 0x12); ConfigureCheck(volume, monitor, 0x62);
-            if (monitor != null && !controlChecks().Any(x => x.IsEnabled && x.IsChecked == true))
+            if (editing == null && initializeNew)
             {
-                var first = controlChecks().FirstOrDefault(x => x.IsEnabled);
-                if (first != null) first.IsChecked = true;
+                updating = true;
+                foreach (var check in controlChecks()) if (!check.IsEnabled) check.IsChecked = false;
+                if (!controlChecks().Any(x => x.IsEnabled && x.IsChecked == true))
+                {
+                    var first = controlChecks().FirstOrDefault(x => x.IsEnabled);
+                    if (first != null) first.IsChecked = true;
+                }
+                updating = false;
             }
-            featureHint.Text = monitor == null ? "모니터를 선택하세요."
-                : controlChecks().Any(x => x.IsEnabled) ? "" : "사용 가능한 조절 항목이 없습니다.";
+            featureHint.Text = option == null ? "모니터를 선택하세요."
+                : monitor == null ? "연결 대기" : controlChecks().Any(x => x.IsEnabled) ? "" : "사용 가능한 조절 항목이 없습니다.";
             UpdateSaveButton();
         }
 
@@ -213,15 +274,15 @@ namespace MonitorControl
         private static void ConfigureCheck(CheckBox check, MonitorDevice monitor, byte code)
         {
             check.IsEnabled = monitor != null && monitor.Features.Any(x => x.Definition.Code == code && x.Writable);
-            if (!check.IsEnabled) check.IsChecked = false;
-            check.ToolTip = check.IsEnabled ? null : "이 모니터에서는 지원하지 않습니다.";
+            check.ToolTip = check.IsEnabled ? null : monitor == null ? "연결 대기 중에는 기존 표시 항목을 유지합니다." : "이 모니터에서는 지원하지 않습니다.";
         }
 
         private void UpdateSaveButton()
         {
             if (saveButton == null) return;
             var option = monitorSelector.SelectedItem as MonitorOption;
-            saveButton.IsEnabled = option != null && option.Device != null && controlChecks().Any(x => x.IsEnabled) && (editing != null || manager.Settings.Widgets.Count < SettingsStore.MaximumWidgets);
+            saveButton.IsEnabled = editing != null || (option != null && option.Device != null && controlChecks().Any(x => x.IsEnabled && x.IsChecked == true)
+                && manager.Settings.Widgets.Count < SettingsStore.MaximumWidgets && manager.FindByMonitor(option.Id) == null);
             saveButton.Content = editing == null ? "위젯 추가" : "변경 저장";
             AutomationProperties.SetName(saveButton, editing == null ? "위젯 추가" : "변경 저장");
         }
@@ -229,14 +290,19 @@ namespace MonitorControl
         private void SaveWidget()
         {
             var option = monitorSelector.SelectedItem as MonitorOption;
-            if (option == null || option.Device == null) { ShowMessage("연결된 모니터를 먼저 선택해 주세요.", true); return; }
-            bool showBrightness = brightness.IsEnabled && brightness.IsChecked == true;
-            bool showContrast = contrast.IsEnabled && contrast.IsChecked == true;
-            bool showVolume = volume.IsEnabled && volume.IsChecked == true;
+            if (option == null || (option.Device == null && editing == null)) { ShowMessage("연결된 모니터를 선택하세요.", true); return; }
+            var existing = manager.FindByMonitor(option.Id);
+            if (existing != editing)
+            {
+                LoadSelectedMonitor(true); ShowMessage(existing == null ? "위젯이 변경되었습니다." : "이미 추가된 위젯입니다.", false); return;
+            }
+            bool showBrightness = brightness.IsEnabled ? brightness.IsChecked == true : editing != null && editing.ShowBrightness;
+            bool showContrast = contrast.IsEnabled ? contrast.IsChecked == true : editing != null && editing.ShowContrast;
+            bool showVolume = volume.IsEnabled ? volume.IsChecked == true : editing != null && editing.ShowVolume;
             if (!showBrightness && !showContrast && !showVolume) { ShowMessage("표시할 조절 항목을 하나 이상 선택해 주세요.", true); return; }
             bool isNew = editing == null;
-            var placement = editing ?? new WidgetPlacement();
-            placement.MonitorId = option.Device.Id; placement.MonitorName = option.Device.Name;
+            var placement = isNew ? new WidgetPlacement() : Copy(editing);
+            placement.MonitorId = option.Id; placement.MonitorName = option.Device == null ? editing.MonitorName : option.Device.Name;
             placement.ShowBrightness = showBrightness; placement.ShowContrast = showContrast; placement.ShowVolume = showVolume;
             placement.AlwaysOnTop = onTop.IsChecked == true; placement.Locked = locked.IsChecked == true; placement.Theme = theme;
             try
@@ -251,40 +317,29 @@ namespace MonitorControl
                     manager.Add(placement);
                 }
                 else manager.Update(placement);
-                RenderList();
+                RefreshMonitors(); LoadSelectedMonitor(true);
                 ShowMessage(isNew ? "위젯 추가됨" : "저장됨", false);
-                if (!isNew) ResetEditor(false);
             }
             catch (Exception ex) { ShowMessage(ex.Message, true); }
         }
 
         private void Edit(WidgetPlacement placement)
         {
-            editing = placement; preferredId = placement.MonitorId;
-            monitorSelector.SelectedValue = placement.MonitorId;
-            formCaption.Text = "위젯 수정"; title.Text = "위젯"; cancelEdit.Visibility = Visibility.Visible;
-            RefreshMonitors();
-            brightness.IsChecked = brightness.IsEnabled && placement.ShowBrightness;
-            contrast.IsChecked = contrast.IsEnabled && placement.ShowContrast;
-            volume.IsChecked = volume.IsEnabled && placement.ShowVolume;
-            onTop.IsChecked = placement.AlwaysOnTop; locked.IsChecked = placement.Locked; SetTheme(placement.Theme);
-            UpdateSaveButton();
+            SelectMonitor(placement.MonitorId);
             settingsScroll.ScrollToTop();
-            ShowMessage("수정 중", false);
         }
 
-        private void ResetEditor(bool showHint = true)
+        private static WidgetPlacement Copy(WidgetPlacement placement)
         {
-            editing = null; formCaption.Text = "새 위젯"; cancelEdit.Visibility = Visibility.Collapsed;
-            brightness.IsChecked = true; contrast.IsChecked = false; volume.IsChecked = false;
-            onTop.IsChecked = false; locked.IsChecked = false; SetTheme("dark");
-            RefreshMonitors(); UpdateSaveButton();
-            if (showHint) ShowMessage("", false);
+            return new WidgetPlacement { Id = placement.Id, MonitorId = placement.MonitorId, MonitorName = placement.MonitorName,
+                Left = placement.Left, Top = placement.Top, AlwaysOnTop = placement.AlwaysOnTop, Theme = placement.Theme,
+                ShowBrightness = placement.ShowBrightness, ShowContrast = placement.ShowContrast, ShowVolume = placement.ShowVolume, Locked = placement.Locked };
         }
 
         internal void RenderList()
         {
             if (widgetList == null) return;
+            if (editing != null && !manager.Settings.Widgets.Any(x => x.Id == editing.Id)) { RefreshMonitors(); return; }
             widgetList.Children.Clear();
             listCount.Text = manager.Settings.Widgets.Count + "개";
             if (manager.Settings.Widgets.Count == 0)
@@ -296,19 +351,57 @@ namespace MonitorControl
             foreach (var placement in manager.Settings.Widgets.ToList())
             {
                 var item = new Grid(); item.ColumnDefinitions.Add(new ColumnDefinition()); item.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                item.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); item.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
                 var details = new StackPanel { Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center }; item.Children.Add(details);
                 var name = Label(placement.MonitorName, 12, "#D6E8F2"); name.FontWeight = FontWeights.SemiBold; name.TextTrimming = TextTrimming.CharacterEllipsis; details.Children.Add(name);
                 var controls = new List<string>(); if (placement.ShowBrightness) controls.Add("밝기"); if (placement.ShowContrast) controls.Add("명암"); if (placement.ShowVolume) controls.Add("볼륨");
-                bool online = manager.Monitors.Any(x => x.Id == placement.MonitorId);
+                bool online = manager.Monitors.Any(x => SameId(x.Id, placement.MonitorId));
                 var description = Label(String.Join(" · ", controls) + (online ? "" : "  ·  연결 대기"), 10, online ? "#819DAF" : "#C5A878"); description.Margin = new Thickness(0, 5, 0, 0); description.TextWrapping = TextWrapping.Wrap; details.Children.Add(description);
                 var actions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center }; Grid.SetColumn(actions, 1); item.Children.Add(actions);
-                var edit = SmallButton("수정", placement.MonitorName + " 위젯 수정"); edit.Click += delegate { Edit(placement); }; actions.Children.Add(edit);
+                var edit = SmallButton("설정", placement.MonitorName + " 위젯 수정"); edit.Click += delegate { Edit(placement); }; actions.Children.Add(edit);
                 var show = SmallButton("보기", placement.MonitorName + " 위젯 보기"); show.Click += delegate { manager.Reveal(placement.Id); }; actions.Children.Add(show);
                 var remove = SmallButton("삭제", placement.MonitorName + " 위젯 삭제"); remove.Foreground = Color("#DCA99E");
-                remove.Click += delegate { manager.Remove(placement.Id); if (editing == placement) ResetEditor(); RenderList(); ShowMessage("위젯 삭제됨", false); }; actions.Children.Add(remove);
-                widgetList.Children.Add(new Border { Background = Color("#172731"), BorderBrush = Color("#2C424E"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(14), Margin = new Thickness(0, 0, 0, 8), Child = item });
+                remove.Click += delegate { manager.Remove(placement.Id); RefreshMonitors(); ShowMessage("위젯 삭제됨", false); }; actions.Children.Add(remove);
+                var quickOptions = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 13, 0, 0) };
+                Grid.SetRow(quickOptions, 1); Grid.SetColumnSpan(quickOptions, 2); item.Children.Add(quickOptions);
+                var quickLock = QuickOption(placement, true); quickLock.Margin = new Thickness(0, 0, 22, 0); quickOptions.Children.Add(quickLock);
+                quickOptions.Children.Add(QuickOption(placement, false));
+                bool selected = editing != null && editing.Id == placement.Id;
+                widgetList.Children.Add(new Border { Background = Color(selected ? "#19352F" : "#172731"), BorderBrush = Color(selected ? "#5B9E8D" : "#2C424E"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(14), Margin = new Thickness(0, 0, 0, 8), Child = item });
             }
             UpdateSaveButton();
+        }
+
+        private CheckBox QuickOption(WidgetPlacement placement, bool positionLock)
+        {
+            var check = Check(positionLock ? "위치 잠금" : "항상 위", placement.MonitorName + (positionLock ? " 위치 잠금" : " 항상 위에 표시"));
+            check.IsChecked = positionLock ? placement.Locked : placement.AlwaysOnTop;
+            bool applying = false;
+            RoutedEventHandler apply = delegate {
+                if (applying) return;
+                try
+                {
+                    var changed = Copy(placement);
+                    if (positionLock) changed.Locked = check.IsChecked == true;
+                    else changed.AlwaysOnTop = check.IsChecked == true;
+                    manager.Update(changed);
+                    if (editing != null && editing.Id == placement.Id)
+                    {
+                        updating = true;
+                        if (positionLock) locked.IsChecked = placement.Locked; else onTop.IsChecked = placement.AlwaysOnTop;
+                        updating = false;
+                    }
+                    ShowMessage("저장됨", false);
+                    RenderList();
+                }
+                catch (Exception ex)
+                {
+                    applying = true; check.IsChecked = positionLock ? placement.Locked : placement.AlwaysOnTop; applying = false;
+                    ShowMessage(ex.Message, true);
+                }
+            };
+            check.Checked += apply; check.Unchecked += apply;
+            return check;
         }
 
         private static Button SmallButton(string text, string automationName)

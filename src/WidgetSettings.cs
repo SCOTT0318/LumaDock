@@ -140,29 +140,46 @@ namespace MonitorControl
         {
             var result = new WidgetSettings { RestoreWidgets = source.RestoreWidgets };
             var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var monitors = new Dictionary<string, WidgetPlacement>(StringComparer.OrdinalIgnoreCase);
             if (source.Widgets == null) return result;
             foreach (var item in source.Widgets)
             {
                 if (item == null) continue;
-                if (result.Widgets.Count >= MaximumWidgets) break;
+                string monitorId = Bounded(item.MonitorId, 512);
+                WidgetPlacement existing;
+                if (monitorId.Length > 0 && monitors.TryGetValue(monitorId, out existing))
+                {
+                    // Legacy layouts could contain several panels for one monitor.
+                    // Keep the first panel's placement/preferences and preserve all controls.
+                    existing.ShowBrightness |= item.ShowBrightness;
+                    existing.ShowContrast |= item.ShowContrast;
+                    existing.ShowVolume |= item.ShowVolume;
+                    continue;
+                }
+                if (result.Widgets.Count >= MaximumWidgets) continue;
                 string id = item.Id == null ? "" : item.Id.Trim();
                 if (id.Length == 0 || id.Length > 64 || !used.Add(id))
                 {
                     do { id = Guid.NewGuid().ToString("N"); } while (!used.Add(id));
                 }
-                result.Widgets.Add(new WidgetPlacement {
+                var placement = new WidgetPlacement {
                     Id = id,
-                    MonitorId = Bounded(item.MonitorId, 512),
+                    MonitorId = monitorId,
                     MonitorName = Bounded(item.MonitorName, 160),
                     Left = Coordinate(item.Left), Top = Coordinate(item.Top),
                     AlwaysOnTop = item.AlwaysOnTop,
                     Theme = String.Equals((item.Theme ?? "").Trim(), "light", StringComparison.OrdinalIgnoreCase) ? "light" : "dark",
-                    ShowBrightness = item.ShowBrightness || !(item.ShowContrast || item.ShowVolume),
+                    ShowBrightness = item.ShowBrightness,
                     ShowContrast = item.ShowContrast,
                     ShowVolume = item.ShowVolume,
                     Locked = item.Locked
-                });
+                };
+                result.Widgets.Add(placement);
+                // Empty IDs cannot identify a physical monitor reliably.
+                if (monitorId.Length > 0) monitors.Add(monitorId, placement);
             }
+            foreach (var placement in result.Widgets)
+                if (!(placement.ShowBrightness || placement.ShowContrast || placement.ShowVolume)) placement.ShowBrightness = true;
             return result;
         }
 
