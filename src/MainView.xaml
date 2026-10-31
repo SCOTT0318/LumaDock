@@ -1,0 +1,206 @@
+<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      Background="#0E141B">
+    <Grid.Resources>
+        <SolidColorBrush x:Key="Accent" Color="#8CE8D3"/>
+        <Style TargetType="ScrollBar">
+            <Setter Property="Width" Value="10"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Track x:Name="PART_Track" Orientation="Vertical" IsDirectionReversed="True" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" ViewportSize="{TemplateBinding ViewportSize}" Value="{Binding Value, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                            <Track.DecreaseRepeatButton><RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Focusable="False"><RepeatButton.Template><ControlTemplate><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.DecreaseRepeatButton>
+                            <Track.IncreaseRepeatButton><RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Focusable="False"><RepeatButton.Template><ControlTemplate><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.IncreaseRepeatButton>
+                            <Track.Thumb><Thumb Margin="2,0" MinHeight="24"><Thumb.Template><ControlTemplate><Border Background="#3C535D" CornerRadius="3"/></ControlTemplate></Thumb.Template></Thumb></Track.Thumb>
+                        </Track>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#EDF3F6"/>
+            <Setter Property="FontFamily" Value="Segoe UI, Malgun Gothic"/>
+            <Setter Property="FontSize" Value="13"/>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Foreground" Value="#DAE3EB"/>
+            <Setter Property="Background" Value="#1B2732"/>
+            <Setter Property="BorderBrush" Value="#354550"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="15,9"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontFamily" Value="Segoe UI, Malgun Gothic"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Frame" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" RecognizesAccessKey="True"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Frame" Property="BorderBrush" Value="#8CE8D3"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Frame" Property="Opacity" Value="0.75"/></Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Frame" Property="BorderBrush" Value="#8CE8D3"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Frame" Property="Opacity" Value="0.4"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="Slider">
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="IsMoveToPointEnabled" Value="True"/>
+            <Setter Property="SmallChange" Value="1"/>
+            <Setter Property="LargeChange" Value="10"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid Background="Transparent">
+                            <Track x:Name="PART_Track" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" Value="{Binding Value, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="Slider.DecreaseLarge" Focusable="False">
+                                        <RepeatButton.Template><ControlTemplate><Border Height="5" Background="#8CE8D3" CornerRadius="2"/></ControlTemplate></RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="Slider.IncreaseLarge" Focusable="False">
+                                        <RepeatButton.Template><ControlTemplate><Border Height="5" Background="#33424B" CornerRadius="2"/></ControlTemplate></RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.IncreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Width="18" Height="18" Cursor="Hand">
+                                        <Thumb.Template><ControlTemplate><Ellipse Fill="#C1F5E9" Stroke="#426D66" StrokeThickness="3"/></ControlTemplate></Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                            <Border x:Name="FocusRing" BorderBrush="#8CE8D3" BorderThickness="1" CornerRadius="5" Visibility="Collapsed" IsHitTestVisible="False"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="FocusRing" Property="Visibility" Value="Visible"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Foreground" Value="#EDF3F6"/>
+            <Setter Property="Background" Value="#1B2732"/>
+            <Setter Property="BorderBrush" Value="#40515C"/>
+            <Setter Property="Padding" Value="12,9"/>
+            <Setter Property="MinWidth" Value="180"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" Focusable="False" ClickMode="Press">
+                                <ToggleButton.Template><ControlTemplate><Border Background="#1B2732" BorderBrush="#40515C" BorderThickness="1" CornerRadius="6"><TextBlock Text="⌄" HorizontalAlignment="Right" Margin="0,0,12,0" VerticalAlignment="Center" Foreground="#8CE8D3"/></Border></ControlTemplate></ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" Margin="12,9,32,9" IsHitTestVisible="False"/>
+                            <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False">
+                                <Border Background="#1B2732" BorderBrush="#40515C" BorderThickness="1" CornerRadius="6" Padding="4" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}">
+                                    <ScrollViewer MaxHeight="260"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/></ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="#EDF3F6"/>
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="Template">
+                <Setter.Value><ControlTemplate TargetType="ComboBoxItem"><Border x:Name="Item" CornerRadius="4" Padding="{TemplateBinding Padding}"><ContentPresenter/></Border><ControlTemplate.Triggers><Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Item" Property="Background" Value="#344850"/></Trigger><Trigger Property="IsSelected" Value="True"><Setter TargetName="Item" Property="Background" Value="#2A3C42"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value>
+            </Setter>
+        </Style>
+            <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="#8CE8D3"/>
+            <Setter Property="Foreground" Value="#122A2C"/>
+            <Setter Property="BorderBrush" Value="#8CE8D3"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+        <Style TargetType="Expander">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Expander">
+                        <StackPanel>
+                            <ToggleButton IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}" HorizontalContentAlignment="Left" Cursor="Hand" Focusable="True">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border Padding="0,8" Background="Transparent"><StackPanel Orientation="Horizontal"><TextBlock x:Name="Arrow" Text="+" Foreground="#8CE8D3" FontSize="15" Width="21" VerticalAlignment="Center"/><ContentPresenter Content="{Binding Header, RelativeSource={RelativeSource AncestorType={x:Type Expander}}}" VerticalAlignment="Center"/></StackPanel></Border>
+                                        <ControlTemplate.Triggers><Trigger Property="IsChecked" Value="True"><Setter TargetName="Arrow" Property="Text" Value="−"/></Trigger></ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter x:Name="Expanded" Visibility="Collapsed"/>
+                        </StackPanel>
+                        <ControlTemplate.Triggers><Trigger Property="IsExpanded" Value="True"><Setter TargetName="Expanded" Property="Visibility" Value="Visible"/></Trigger></ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Grid.Resources>
+    <Grid.ColumnDefinitions><ColumnDefinition Width="254"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <Grid.RowDefinitions><RowDefinition Height="86"/><RowDefinition Height="*"/><RowDefinition Height="36"/></Grid.RowDefinitions>
+    <Border Grid.RowSpan="2" Background="#121B24" BorderBrush="#293641" BorderThickness="0,0,1,0">
+        <Grid Margin="20,0,20,20">
+            <Grid.RowDefinitions><RowDefinition Height="105"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <Grid VerticalAlignment="Center" Margin="3,0,0,0">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="44"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Border Width="35" Height="35" HorizontalAlignment="Left" Background="#213D3D" CornerRadius="10">
+                    <Grid Margin="8"><Border BorderBrush="#8CE8D3" BorderThickness="1.6" CornerRadius="3" Height="13" VerticalAlignment="Top"/><Rectangle Fill="#8CE8D3" Width="1.6" Height="4" VerticalAlignment="Bottom" Margin="0,0,0,3"/><Rectangle Fill="#8CE8D3" Width="10" Height="1.6" VerticalAlignment="Bottom"/></Grid>
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="LumaDock" FontSize="19" FontWeight="SemiBold"/></StackPanel>
+            </Grid>
+            <Grid Grid.Row="1" Margin="4,0,4,17">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBlock Text="연결된 디스플레이" Foreground="#8EA2B3" FontSize="11" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <Border Grid.Column="1" Background="#263740" CornerRadius="6" Padding="7,3"><TextBlock x:Name="MonitorCount" Text="00" Foreground="#A9CBBF" FontSize="10" FontWeight="SemiBold"/></Border>
+            </Grid>
+            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,2,0"><StackPanel x:Name="MonitorList"/></ScrollViewer>
+
+        </Grid>
+    </Border>
+    <Border Grid.Column="1" BorderBrush="#273540" BorderThickness="0,0,0,1" Padding="30,0">
+        <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="디스플레이" FontSize="15" FontWeight="SemiBold"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Border Background="#1C3431" CornerRadius="6" Padding="8,5" VerticalAlignment="Center" Margin="0,0,12,0"><TextBlock x:Name="ModeBadge" Text="LIVE" Foreground="#8CE8D3" FontSize="9" FontWeight="SemiBold"/></Border>
+                <Button x:Name="RefreshButton" Content="다시 검색" Margin="0,0,7,0" ToolTip="연결된 모니터와 지원 기능을 다시 읽습니다"/>
+                <Button x:Name="TrayButton" Content="트레이로" Margin="0,0,7,0" ToolTip="알림 영역에서 계속 실행합니다"/>
+                <Button x:Name="WidgetButton" Style="{StaticResource PrimaryButton}">
+                    <StackPanel Orientation="Horizontal"><Grid Width="12" Height="12" Margin="0,0,7,0"><Border Width="5" Height="5" Background="#173F3C" CornerRadius="1" HorizontalAlignment="Left" VerticalAlignment="Top"/><Border Width="5" Height="5" Background="#173F3C" CornerRadius="1" HorizontalAlignment="Right" VerticalAlignment="Top"/><Border Width="5" Height="5" Background="#173F3C" CornerRadius="1" HorizontalAlignment="Left" VerticalAlignment="Bottom"/><Border Width="5" Height="5" Background="#173F3C" CornerRadius="1" HorizontalAlignment="Right" VerticalAlignment="Bottom"/></Grid><TextBlock Text="위젯" Foreground="#122A2C" FontSize="11" FontWeight="SemiBold"/></StackPanel>
+                </Button>
+            </StackPanel>
+        </Grid>
+    </Border>
+    <Grid Grid.Row="1" Grid.Column="1" Margin="30,28,22,18">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <Grid Margin="0,0,8,25">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="75"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Border Width="58" Height="58" HorizontalAlignment="Left" VerticalAlignment="Center" CornerRadius="16" Background="#192D34" BorderBrush="#31505A" BorderThickness="1">
+                <Grid Margin="13,14,13,12"><Border Height="22" BorderBrush="#8CE8D3" BorderThickness="1.5" CornerRadius="3" VerticalAlignment="Top"><Border Margin="4" Background="#2D5355" CornerRadius="1"/></Border><Rectangle Fill="#8CE8D3" Width="1.5" Height="5" VerticalAlignment="Bottom" Margin="0,0,0,2"/><Rectangle Fill="#8CE8D3" Width="15" Height="1.5" VerticalAlignment="Bottom"/></Grid>
+            </Border>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock x:Name="DeviceTitle" Text="모니터를 찾고 있습니다" FontSize="27" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                <TextBlock x:Name="DeviceSubtitle" Text="연결된 화면과 지원 기능을 확인합니다" Foreground="#90A6B7" Margin="0,8,0,0" FontSize="11" TextTrimming="CharacterEllipsis"/>
+            </StackPanel>
+            <Border Grid.Column="2" x:Name="ConnectionPill" VerticalAlignment="Center" Background="#1A3430" BorderBrush="#2A4A43" BorderThickness="1" CornerRadius="7" Padding="10,6" Margin="15,0,0,0">
+                <StackPanel Orientation="Horizontal"><Ellipse Width="5" Height="5" Fill="#8CE8D3" VerticalAlignment="Center" Margin="0,0,7,0"/><TextBlock x:Name="ConnectionText" Text="검색 중" Foreground="#9DE4D1" FontSize="10"/></StackPanel>
+            </Border>
+        </Grid>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,8,0">
+            <StackPanel x:Name="FeaturePanel"/>
+        </ScrollViewer>
+    </Grid>
+    <Border Grid.Row="2" Grid.ColumnSpan="2" Background="#0B1117" BorderBrush="#253440" BorderThickness="0,1,0,0" Padding="23,0">
+        <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock x:Name="StatusText" Text="준비 중…" VerticalAlignment="Center" FontSize="10" Foreground="#8298A9" TextTrimming="CharacterEllipsis"/>
+            <TextBlock x:Name="FooterLabel" Grid.Column="1" Text="LumaDock" Foreground="#536F80" FontSize="9" VerticalAlignment="Center" Margin="20,0,0,0"/>
+        </Grid>
+    </Border>
+</Grid>

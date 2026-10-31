@@ -1,0 +1,358 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Linq;
+using System.Management;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace MonitorControl
+{
+    public sealed class MonitorDevice : IDisposable
+    {
+        public string Id;
+        public string Name;
+        public string Display;
+        public string Resolution;
+        public bool Primary;
+        public bool Demo;
+        public string Capabilities = "";
+        public string Notice = "";
+        public string WmiInstance;
+        public List<MonitorFeature> Features = new List<MonitorFeature>();
+        public Dictionary<byte, List<uint>> Reported = new Dictionary<byte, List<uint>>();
+        internal IntPtr Handle;
+        internal bool Disposed;
+        public void Dispose()
+        {
+            if (Disposed) return;
+            Disposed = true;
+            if (Handle != IntPtr.Zero) { NativeMethods.DestroyPhysicalMonitor(Handle); Handle = IntPtr.Zero; }
+        }
+    }
+
+    public sealed class MonitorService : IDisposable
+    {
+        private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
+        private readonly bool demo;
+        private List<MonitorDevice> devices = new List<MonitorDevice>();
+        private bool disposed;
+        public event Action<MonitorDevice, MonitorFeature> FeatureChanged;
+        public MonitorService(bool demoMode) { demo = demoMode; }
+
+        public Task<List<MonitorDevice>> ScanAsync()
+        {
+            return Task.Run(async delegate {
+                await gate.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    if (disposed) throw new ObjectDisposedException("MonitorService");
+                    // Invalidate old models and release handles while no writes can run.
+                    foreach (var device in devices) device.Dispose();
+                    devices.Clear();
+                    if (demo) devices = DemoDevices();
+                    else ScanNative(devices);
+                    return new List<MonitorDevice>(devices);
+                }
+                finally { gate.Release(); }
+            });
+        }
+
+        private static void ScanNative(List<MonitorDevice> found)
+        {
+            NativeMethods.MonitorCallback callback = delegate(IntPtr logical, IntPtr hdc, ref NativeMethods.Rect rect, IntPtr data) {
+                var info = new NativeMethods.MonitorInfo();
+                info.Size = Marshal.SizeOf(info);
+                if (!NativeMethods.GetMonitorInfo(logical, ref info)) return true;
+                var display = new NativeMethods.DisplayDevice();
+                display.Size = Marshal.SizeOf(display);
+                // Interface IDs contain the full physical instance, allowing an exact WMI match.
+                NativeMethods.EnumDisplayDevices(info.Device, 0, ref display, 1);
+                string deviceId = NormalizeId(display.Id);
+                string displayName = info.Device.Replace(@"\\.\", "");
+                string resolution = (info.Monitor.Right - info.Monitor.Left) + " × " + (info.Monitor.Bottom - info.Monitor.Top);
+                uint count;
+                if (!NativeMethods.GetNumberOfPhysicalMonitorsFromHMONITOR(logical, out count) || count == 0 || count > 64)
+                {
+                    found.Add(new MonitorDevice { Id = deviceId.Length == 0 ? info.Device : deviceId, Name = String.IsNullOrEmpty(display.Description) ? displayName : display.Description,
+                        Display = displayName, Resolution = resolution, Primary = (info.Flags & 1) != 0, Notice = "이 연결에서는 모니터 제어 채널을 찾지 못했습니다." });
+                    return true;
+                }
+                var physical = new NativeMethods.PhysicalMonitor[count];
+                if (!NativeMethods.GetPhysicalMonitorsFromHMONITOR(logical, count, physical))
+                {
+                    foreach (var handle in physical) if (handle.Handle != IntPtr.Zero) NativeMethods.DestroyPhysicalMonitor(handle.Handle);
+                    found.Add(new MonitorDevice { Id = info.Device, Name = displayName, Display = displayName, Resolution = resolution,
+                        Primary = (info.Flags & 1) != 0, Notice = "모니터 연결을 열지 못했습니다. 다시 검색해 주세요." });
+                    return true;
+                }
+                for (int i = 0; i < physical.Length; i++)
+                {
+                    var device = new MonitorDevice { Handle = physical[i].Handle, Id = (deviceId.Length == 0 ? info.Device : deviceId) + "|" + i,
+                        Name = physical[i].Description, Display = displayName, Resolution = resolution, Primary = (info.Flags & 1) != 0 };
+                    // Ownership transfers immediately, including failures in capability discovery.
+                    found.Add(device);
+                    try { Discover(device); }
+                    catch (Exception ex) { device.Notice = "지원 기능 조회 실패: " + ex.Message; }
+                }
+                return true;
+            };
+            if (!NativeMethods.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, callback, IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "모니터 목록을 읽지 못했습니다.");
+            AddWmiBrightness(found);
+            AddWmiNames(found);
+        }
+
+        private static void AddWmiNames(List<MonitorDevice> found)
+        {
+            try
+            {
+                using (var search = new ManagementObjectSearcher(@"root\wmi", "SELECT InstanceName, UserFriendlyName FROM WmiMonitorID WHERE Active = TRUE"))
+                using (var results = search.Get())
+                foreach (ManagementObject row in results)
+                using (row)
+                {
+                    string id = NormalizeId(Convert.ToString(row["InstanceName"]));
+                    var name = row["UserFriendlyName"] as ushort[];
+                    if (name == null || id.Length == 0) continue;
+                    string friendly = new string(name.Where(x => x != 0).Select(x => (char)x).ToArray()).Trim();
+                    if (friendly.Length == 0) continue;
+                    foreach (var device in found.Where(x => x.Id == id || x.Id.StartsWith(id + "|", StringComparison.OrdinalIgnoreCase)))
+                        if (String.IsNullOrWhiteSpace(device.Name) || device.Name == device.Display || device.Name == "내장 디스플레이" || device.Name.IndexOf("Generic", StringComparison.OrdinalIgnoreCase) >= 0)
+                            device.Name = friendly;
+                }
+            }
+            catch (ManagementException) { }
+            catch (UnauthorizedAccessException) { }
+            catch (COMException) { }
+        }
+
+        internal static string NormalizeId(string value)
+        {
+            if (String.IsNullOrEmpty(value)) return "";
+            value = value.ToUpperInvariant();
+            if (value.StartsWith(@"\\?\", StringComparison.Ordinal))
+            {
+                string[] parts = value.Substring(4).Split('#');
+                if (parts.Length >= 3 && (parts[0] == "DISPLAY" || parts[0] == "MONITOR")) value = parts[1] + "\\" + parts[2];
+            }
+            value = value.Replace("MONITOR\\", "").Replace("DISPLAY\\", "");
+            return Regex.Replace(value, @"_\d+$", "");
+        }
+
+        private static void Discover(MonitorDevice device)
+        {
+            // Basic controls are probed independently: capability reports are often incomplete.
+            foreach (var definition in FeatureCatalog.All.Where(x => x.Basic))
+            {
+                uint minimum = 0, current = 0, maximum = 0;
+                bool success = Retry(delegate {
+                    return definition.Code == 0x10
+                        ? NativeMethods.GetMonitorBrightness(device.Handle, out minimum, out current, out maximum)
+                        : NativeMethods.GetMonitorContrast(device.Handle, out minimum, out current, out maximum);
+                });
+                if (success && maximum > minimum && current >= minimum && current <= maximum)
+                    device.Features.Add(new MonitorFeature { Definition = definition, Minimum = minimum, Current = current, Maximum = maximum, Backend = "HighLevel" });
+                else
+                {
+                    uint type;
+                    if (NativeMethods.GetVCPFeatureAndVCPFeatureReply(device.Handle, definition.Code, out type, out current, out maximum) && maximum > 0 && current <= maximum)
+                        device.Features.Add(new MonitorFeature { Definition = definition, Current = current, Maximum = maximum });
+                }
+            }
+            uint length;
+            if (NativeMethods.GetCapabilitiesStringLength(device.Handle, out length) && length > 0 && length <= 65536)
+            {
+                var buffer = new StringBuilder((int)length);
+                if (NativeMethods.CapabilitiesRequestAndCapabilitiesReply(device.Handle, buffer, length)) device.Capabilities = buffer.ToString();
+            }
+            device.Reported = CapabilityParser.Parse(device.Capabilities);
+            var model = Regex.Match(device.Capabilities, @"\bmodel\(([^)]+)\)", RegexOptions.IgnoreCase);
+            if (model.Success) device.Name = model.Groups[1].Value.Trim();
+            if (String.IsNullOrWhiteSpace(device.Name)) device.Name = device.Display;
+            foreach (var definition in FeatureCatalog.All.Where(x => !x.Basic))
+            {
+                if (!device.Reported.ContainsKey(definition.Code)) continue;
+                uint type, current, maximum;
+                if (!NativeMethods.GetVCPFeatureAndVCPFeatureReply(device.Handle, definition.Code, out type, out current, out maximum)) continue;
+                if (definition.Discrete || (maximum > 0 && current <= maximum))
+                    device.Features.Add(new MonitorFeature { Definition = definition, Current = current, Maximum = maximum,
+                        Choices = new List<uint>(device.Reported[definition.Code]) });
+            }
+            if (device.Features.Count == 0) device.Notice = "제어 가능한 기능을 읽지 못했습니다. 모니터의 OSD에서 DDC/CI가 켜져 있는지 확인해 주세요.";
+            else if (device.Capabilities.Length == 0) device.Notice = "지원 기능 목록을 받지 못해, 직접 조회에 성공한 기본 항목만 표시합니다.";
+        }
+
+        private static void AddWmiBrightness(List<MonitorDevice> found)
+        {
+            try
+            {
+                using (var search = new ManagementObjectSearcher(@"root\wmi", "SELECT * FROM WmiMonitorBrightness WHERE Active = TRUE"))
+                using (var results = search.Get())
+                foreach (ManagementObject row in results)
+                using (row)
+                {
+                    string instance = Convert.ToString(row["InstanceName"]);
+                    string id = NormalizeId(instance);
+                    // Match the complete instance, never just the model (identical monitors exist).
+                    var candidates = found.Where(x => x.Id == id || x.Id.StartsWith(id + "|", StringComparison.OrdinalIgnoreCase)).ToList();
+                    MonitorDevice device;
+                    if (candidates.Count == 1) device = candidates[0];
+                    else if (candidates.Count == 0)
+                    {
+                        device = new MonitorDevice { Id = id, Name = "내장 디스플레이", Display = "WMI", Resolution = "Windows 밝기 제어" };
+                        found.Add(device);
+                    }
+                    else continue;
+                    if (device.Features.Any(x => x.Definition.Code == 0x10)) continue;
+                    device.WmiInstance = instance;
+                    byte[] levels = row["Level"] as byte[];
+                    device.Features.Add(new MonitorFeature { Definition = FeatureCatalog.All[0], Current = Convert.ToUInt32(row["CurrentBrightness"]), Maximum = 100,
+                        Backend = "WMI", Choices = levels == null ? new List<uint>() : levels.Select(x => (uint)x).Distinct().OrderBy(x => x).ToList() });
+                    device.Notice = "내장 화면 밝기는 Windows 밝기 제어를 사용합니다.";
+                }
+            }
+            catch (ManagementException) { /* External-only systems commonly have no WMI class. */ }
+            catch (UnauthorizedAccessException) { }
+            catch (COMException) { }
+        }
+
+        public Task<uint> SetAsync(MonitorDevice device, MonitorFeature feature, uint value)
+        {
+            var operation = Task.Run(async delegate {
+                await gate.WaitAsync().ConfigureAwait(false);
+                try
+                {
+                    if (disposed || device.Disposed || !devices.Contains(device)) throw new InvalidOperationException("모니터 연결이 변경되었습니다. 다시 검색해 주세요.");
+                    if (!device.Features.Contains(feature) || !feature.Writable) throw new InvalidOperationException("변경할 수 없는 항목입니다.");
+                    if (feature.Definition.Discrete)
+                    { if (!feature.Choices.Contains(value)) throw new ArgumentOutOfRangeException("value"); }
+                    else if (value < feature.Minimum || value > feature.Maximum) throw new ArgumentOutOfRangeException("value");
+                    if (feature.Backend == "WMI" && feature.Choices.Count > 0) value = feature.Choices.OrderBy(x => Math.Abs((long)x - value)).First();
+                    if (device.Demo) { feature.Current = value; return value; }
+                    if (feature.Backend == "WMI") WriteWmi(device.WmiInstance, value);
+                    else
+                    {
+                        bool ok = Retry(delegate {
+                            if (feature.Backend == "HighLevel") return feature.Definition.Code == 0x10
+                                ? NativeMethods.SetMonitorBrightness(device.Handle, value) : NativeMethods.SetMonitorContrast(device.Handle, value);
+                            return NativeMethods.SetVCPFeature(device.Handle, feature.Definition.Code, value);
+                        });
+                        if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error(), "모니터가 변경 요청에 응답하지 않았습니다.");
+                    }
+                    // Input switching can immediately sever DDC. A successful set is enough.
+                    if (feature.Definition.Code != 0x60)
+                    {
+                        uint actual = feature.Current;
+                        bool confirmed = false;
+                        for (int attempt = 0; attempt < 3; attempt++)
+                        {
+                            Thread.Sleep(100);
+                            uint read;
+                            if (TryRead(device, feature, out read))
+                            {
+                                confirmed = true; actual = read;
+                                if (actual == value) break;
+                            }
+                        }
+                        if (!confirmed) throw new InvalidOperationException("요청을 보냈지만 적용 값을 확인하지 못했습니다. 다시 검색해 주세요.");
+                        feature.Current = actual;
+                        if (actual != value) throw new InvalidOperationException("모니터가 요청한 값을 적용하지 않았습니다. 화면 모드나 OSD 설정을 확인해 주세요.");
+                    }
+                    else feature.Current = value;
+                    return feature.Current;
+                }
+                finally { gate.Release(); }
+            });
+            return PublishChangeAsync(operation, device, feature);
+        }
+
+        private async Task<uint> PublishChangeAsync(Task<uint> operation, MonitorDevice device, MonitorFeature feature)
+        {
+            try { return await operation.ConfigureAwait(false); }
+            finally
+            {
+                var notify = FeatureChanged;
+                if (notify != null) notify(device, feature);
+            }
+        }
+
+        private static void WriteWmi(string instance, uint value)
+        {
+            using (var search = new ManagementObjectSearcher(@"root\wmi", "SELECT * FROM WmiMonitorBrightnessMethods WHERE Active = TRUE"))
+            using (var results = search.Get())
+            foreach (ManagementObject row in results)
+            using (row)
+            {
+                if (!String.Equals(Convert.ToString(row["InstanceName"]), instance, StringComparison.OrdinalIgnoreCase)) continue;
+                using (var args = row.GetMethodParameters("WmiSetBrightness"))
+                {
+                    args["Timeout"] = (uint)0;
+                    args["Brightness"] = (byte)value;
+                    using (var response = row.InvokeMethod("WmiSetBrightness", args, null))
+                        if (response == null || Convert.ToUInt32(response["ReturnValue"]) != 0) throw new InvalidOperationException("Windows 밝기 변경에 실패했습니다.");
+                    return;
+                }
+            }
+            throw new InvalidOperationException("내장 디스플레이 연결을 찾지 못했습니다.");
+        }
+
+        private static bool TryRead(MonitorDevice device, MonitorFeature feature, out uint value)
+        {
+            uint actual = 0, minimum = 0, maximum = 0, type = 0;
+            if (feature.Backend == "WMI")
+            {
+                using (var search = new ManagementObjectSearcher(@"root\wmi", "SELECT * FROM WmiMonitorBrightness WHERE Active = TRUE"))
+                using (var results = search.Get())
+                foreach (ManagementObject row in results)
+                using (row)
+                    if (String.Equals(Convert.ToString(row["InstanceName"]), device.WmiInstance, StringComparison.OrdinalIgnoreCase))
+                    { value = Convert.ToUInt32(row["CurrentBrightness"]); return true; }
+                value = 0; return false;
+            }
+            bool ok = Retry(delegate {
+                if (feature.Backend == "HighLevel") return feature.Definition.Code == 0x10
+                    ? NativeMethods.GetMonitorBrightness(device.Handle, out minimum, out actual, out maximum)
+                    : NativeMethods.GetMonitorContrast(device.Handle, out minimum, out actual, out maximum);
+                return NativeMethods.GetVCPFeatureAndVCPFeatureReply(device.Handle, feature.Definition.Code, out type, out actual, out maximum);
+            });
+            value = actual;
+            return ok && (feature.Definition.Discrete || (actual >= feature.Minimum && actual <= feature.Maximum));
+        }
+
+        private static bool Retry(Func<bool> action)
+        {
+            if (action()) return true;
+            Thread.Sleep(90);
+            return action();
+        }
+
+        private static List<MonitorDevice> DemoDevices()
+        {
+            var one = DemoDevice("demo-1", "DELL U2723QE", "DISPLAY1", "3840 × 2160", true, "(vcp(10 12 60(0f 11 12) 62 14(05 08 0B) 16 18 1A 87))");
+            var two = DemoDevice("demo-2", "LG ULTRAGEAR", "DISPLAY2", "2560 × 1440", false, "(vcp(10 12 60(0f 11) 87))");
+            var three = DemoDevice("demo-3", "내장 디스플레이", "DISPLAY3", "1920 × 1200", false, "(vcp(10))");
+            return new List<MonitorDevice> { one, two, three };
+        }
+
+        private static MonitorDevice DemoDevice(string id, string name, string display, string resolution, bool primary, string caps)
+        {
+            var device = new MonitorDevice { Id = id, Name = name, Display = display, Resolution = resolution, Primary = primary, Demo = true, Capabilities = caps, Reported = CapabilityParser.Parse(caps) };
+            foreach (var definition in FeatureCatalog.All)
+                if (device.Reported.ContainsKey(definition.Code)) device.Features.Add(new MonitorFeature { Definition = definition, Maximum = 100,
+                    Current = definition.Code == 0x60 ? 0x0Fu : definition.Code == 0x14 ? 5u : definition.Code == 0x10 ? 72u : definition.Code == 0x12 ? 65u : definition.Code == 0x62 ? 30u : 50u,
+                    Choices = new List<uint>(device.Reported[definition.Code]) });
+            return device;
+        }
+
+        public void Dispose()
+        {
+            gate.Wait();
+            try { disposed = true; foreach (var device in devices) device.Dispose(); devices.Clear(); }
+            finally { gate.Release(); }
+        }
+    }
+}
