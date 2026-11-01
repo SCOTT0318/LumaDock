@@ -22,7 +22,7 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'App.config') -Destination ($appl
 Write-Output "Built: $applicationPath"
 if ($Test) {
     $testPath = Join-Path $outputDirectory 'MonitorControl.Tests.exe'
-    $testSources = @('src\Capabilities.cs','src\NativeMethods.cs','src\MonitorService.cs','tests\Tests.cs') | ForEach-Object { Join-Path $projectRoot $_ }
+    $testSources = @('src\Capabilities.cs','src\NativeMethods.cs','src\MonitorService.cs','src\DisplayRecovery.cs','tests\Tests.cs') | ForEach-Object { Join-Path $projectRoot $_ }
     & $compilerPath /nologo /utf8output /codepage:65001 /langversion:5 /target:exe "/out:$testPath" @references @testSources
     if ($LASTEXITCODE -ne 0) { throw 'Test build failed.' }
     & $testPath

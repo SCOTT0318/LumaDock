@@ -19,6 +19,17 @@ namespace MonitorControl
                 bool demo = args.Contains("--demo") || args.Contains("--render-demo");
                 string diagnose = Argument(args, "--diagnose");
                 string preview = Argument(args, "--render-demo");
+                string displayDiagnosis = Argument(args, "--diagnose-display");
+                if (displayDiagnosis != null)
+                {
+                    var connections = WindowsDisplayRecovery.Inspect();
+                    foreach (var connection in connections.Where(x => x.Technology == 5))
+                        new WindowsDisplayRecovery().Reinitialize(new MonitorDevice { Id = connection.Id, IsHdmi = true }, true);
+                    string path = Path.GetFullPath(displayDiagnosis);
+                    Directory.CreateDirectory(Path.GetDirectoryName(path));
+                    File.WriteAllText(path, new JavaScriptSerializer().Serialize(new { ReadOnly = true, RecoveryValidationOnly = true, CapturedAt = DateTimeOffset.Now.ToString("o"), Connections = connections }), new UTF8Encoding(false));
+                    return 0;
+                }
                 if (diagnose != null)
                 {
                     using (var service = new MonitorService(demo))
@@ -28,6 +39,7 @@ namespace MonitorControl
                             ReadOnly = true, Demo = demo, CapturedAt = DateTimeOffset.Now.ToString("o"),
                             Monitors = monitors.Select(m => new {
                                 m.Name, m.Display, m.Resolution, m.Primary, m.Notice, m.Left, m.Top, m.Width, m.Height, m.PositionLabel,
+                                m.Connection, m.IsHdmi, m.SafeDdc, m.ControlRequests, m.ControlFaulted,
                                 Transport = m.WmiInstance != null ? "WMI" : "DDC/CI",
                                 Features = m.Features.Select(f => new {
                                     Code = "0x" + f.Definition.Code.ToString("X2"), f.Definition.Name,
@@ -72,7 +84,7 @@ namespace MonitorControl
             catch (Exception ex)
             {
                 Log(ex);
-                if (!args.Contains("--diagnose") && !args.Contains("--render-demo")) MessageBox.Show(ex.Message, "LumaDock", MessageBoxButton.OK, MessageBoxImage.Error);
+                if (!args.Contains("--diagnose") && !args.Contains("--diagnose-display") && !args.Contains("--render-demo")) MessageBox.Show(ex.Message, "LumaDock", MessageBoxButton.OK, MessageBoxImage.Error);
                 return 1;
             }
         }

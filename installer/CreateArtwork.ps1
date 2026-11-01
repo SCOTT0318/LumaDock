@@ -35,7 +35,7 @@ try {
     $canvas.DrawLine($linePen,144,568,349,568)
     $canvas.DrawLine($monitorPen,144,568,291,568)
     $canvas.FillEllipse($mintBrush,282,559,18,18)
-    $canvas.DrawString('1.0.2', $labelFont, $mutedBrush, 47, 816)
+    $canvas.DrawString('1.0.3', $labelFont, $mutedBrush, 47, 816)
     $banner.Save((Join-Path $artworkDirectory 'wizard.png'),[System.Drawing.Imaging.ImageFormat]::Png)
 } finally {
     $canvas.Dispose(); $banner.Dispose(); $mintBrush.Dispose(); $whiteBrush.Dispose(); $mutedBrush.Dispose(); $cardBrush.Dispose(); $linePen.Dispose(); $monitorPen.Dispose(); $labelFont.Dispose(); $brandFont.Dispose(); $bodyFont.Dispose(); $numberFont.Dispose()

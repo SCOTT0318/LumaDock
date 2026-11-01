@@ -93,6 +93,7 @@ internal static class DisplayFeaturesTests
         var widget = Application.Current.Windows.Cast<Window>().Single(x => x.Title.StartsWith("LumaDock 위젯"));
         var editor = OpenSettings(view);
         Check(editor.IsVisible && editor.Title == "설정 · LumaDock", "The settings action opens the monitor and brightness settings window");
+        Check(Named<CheckBox>(editor, "HDMI 안정 모드").IsChecked == true, "The display settings expose HDMI safety mode enabled by default");
         Check(Named<CheckBox>(editor, "Windows 시작 시 자동 실행").IsChecked == true && Named<CheckBox>(editor, "트레이에서 시작").IsChecked == true, "Startup settings expose the default automatic and tray-only launch options");
         Named<CheckBox>(editor, "Windows 시작 시 자동 실행").IsChecked = false;
         Named<CheckBox>(editor, "트레이에서 시작").IsChecked = false;
@@ -230,6 +231,12 @@ internal static class DisplayFeaturesTests
         var updater = Field<AppUpdater>("updater"); await updater.CheckAsync(true);
         Check(Field<Window>(updater, "dialog") == null && updater.CurrentVersion == UpdateProtocol.Normalize(typeof(MainWindow).Assembly.GetName().Version), "Demo startup update checks return without network access or modal dialogs");
         editor.Close();
+        first.IsHdmi = true;
+        Invoke(window, "RenderMonitorList"); Invoke(window, "SelectMonitor", first); window.UpdateLayout();
+        Check(Named<Button>(view, "HDMI 신호 복구").IsEnabled && tray.ContextMenuStrip.Items.OfType<System.Windows.Forms.ToolStripMenuItem>().Single(x => x.Text == "HDMI 신호 복구").DropDownItems.Count == 1, "Only detected HDMI monitors expose targeted signal recovery in the main window and tray");
+        await (Task)Invoke(window, "RecoverHdmiAsync", first.Id);
+        await WaitFor(() => !Field<bool>("refreshing") && !Field<bool>("recovering"));
+        Check(Field<bool>(first, "Disposed") && window.IsEnabled && Field<List<MonitorDevice>>("monitors").All(x => !Object.ReferenceEquals(x, first)), "Demo signal recovery replaces stale handles and restores usable controls without calling Windows reset APIs");
         results.Add(results.Count + " display feature checks passed in demo mode without native brightness changes, global hooks or update downloads.");
     }
 

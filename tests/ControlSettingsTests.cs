@@ -78,6 +78,10 @@ internal static class ControlSettingsTests
             Check(!loaded.StartWithWindows && !loaded.StartInTray, "Disabled automatic and tray startup remain disabled after saving and loading");
             settings.StartWithWindows = true; settings.StartInTray = true; store.Save(settings); loaded = store.Load();
             Check(loaded.StartWithWindows && loaded.StartInTray, "Both startup options can be re-enabled and persisted");
+            settings.HdmiSafeMode = false; store.Save(settings); loaded = store.Load();
+            Check(!loaded.HdmiSafeMode, "The HDMI safety option persists an explicit opt-out");
+            settings.HdmiSafeMode = true; store.Save(settings); loaded = store.Load();
+            Check(loaded.HdmiSafeMode, "HDMI safety mode can be re-enabled without changing monitor profiles");
             settings.Monitors = new List<MonitorPreference> { null, new MonitorPreference { MonitorId = " panel-left ", Alias = " " + new string('별', 100) + " " }, new MonitorPreference { MonitorId = "PANEL-LEFT", Alias = "duplicate" }, new MonitorPreference { MonitorId = " ", Alias = "empty" } };
             settings.Brightness.Mode = "unknown"; settings.Brightness.StepPercent = 999;
             settings.Brightness.SelectedMonitorIds = new List<string> { " panel-primary ", "PANEL-PRIMARY", "", null, "offline" };
@@ -93,6 +97,7 @@ internal static class ControlSettingsTests
             File.WriteAllText(path, "{\"Version\":1,\"RestoreWidgets\":false,\"Widgets\":[]}"); loaded = store.Load();
             Check(!loaded.RestoreWidgets && !loaded.Brightness.Enabled && loaded.Brightness.FollowWindows && loaded.Brightness.UseHotkeys && loaded.CheckUpdatesOnStartup, "Legacy widget-only settings load with non-disruptive keyboard defaults");
             Check(loaded.StartWithWindows && loaded.StartInTray, "Legacy settings adopt automatic startup and tray-only launch defaults");
+            Check(loaded.HdmiSafeMode, "Existing installations adopt HDMI safety mode without rewriting their settings on load");
             settings = new WidgetSettings { Monitors = Enumerable.Range(0, 80).Select(x => new MonitorPreference { MonitorId = "monitor-" + x, Alias = "alias" }).ToList(),
                 Brightness = new BrightnessPreferences { SelectedMonitorIds = Enumerable.Range(0, 50).Select(x => "selected-" + x).ToList() } };
             store.Save(settings); loaded = store.Load();

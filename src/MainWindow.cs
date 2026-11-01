@@ -38,7 +38,7 @@ namespace MonitorControl
         private bool applyingBrightness, refreshNativeBrightness;
         private readonly DispatcherTimer brightnessTimer;
         private readonly DispatcherTimer displayTimer;
-        private bool refreshing, refreshAgain, closing, allowClose, exitRequested;
+        private bool refreshing, refreshAgain, closing, allowClose, exitRequested, recovering;
         private readonly string previewDirectory;
         private readonly bool startupToTray;
         private bool startupInitialized;
@@ -58,6 +58,7 @@ namespace MonitorControl
                 view = (Grid)XamlReader.Load(stream);
             Content = view;
             widgets = new WidgetManager(this, service, view.Resources, RefreshAsync, SetStatus, !demo && String.IsNullOrEmpty(previewDirectory));
+            service.HdmiSafeMode = widgets.Settings.HdmiSafeMode;
             startupToTray = startInTray || (!demo && String.IsNullOrEmpty(previewDirectory) && widgets.Settings.StartInTray);
             brightnessInput = new BrightnessInput(this, OnBrightnessDelta, SetStatus, demo);
             brightnessTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
@@ -77,7 +78,7 @@ namespace MonitorControl
                 Element<TextBlock>("FooterLabel").Text = "LumaDock · DEMO";
             }
             displayTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1200) };
-            displayTimer.Tick += async delegate { displayTimer.Stop(); await RefreshAsync(); };
+            displayTimer.Tick += async delegate { displayTimer.Stop(); await RefreshMonitorsAsync(false); };
             SystemEvents.DisplaySettingsChanged += OnDisplayChanged;
             SystemEvents.PowerModeChanged += OnPowerChanged;
             SetupTray();
@@ -119,9 +120,11 @@ namespace MonitorControl
         { return new TextBlock { Text = text, FontSize = size, Foreground = Brush(color) }; }
         private void SetStatus(string value) { Element<TextBlock>("StatusText").Text = value; }
 
-        private async Task RefreshAsync()
+        private Task RefreshAsync() { return RefreshMonitorsAsync(true); }
+
+        private async Task RefreshMonitorsAsync(bool refreshValues)
         {
-            if (closing) return;
+            if (closing || recovering) return;
             if (refreshing) { refreshAgain = true; return; }
             refreshing = true;
             string oldId = selected == null ? null : selected.Id;
@@ -135,7 +138,7 @@ namespace MonitorControl
             SetStatus("모니터 검색 중");
             try
             {
-                monitors = await service.ScanAsync();
+                monitors = await service.ScanAsync(refreshValues);
                 if (closing) return;
                 ApplyDisplayNames();
                 selected = monitors.FirstOrDefault(x => x.Id == oldId) ?? monitors.FirstOrDefault(x => x.Primary) ?? monitors.FirstOrDefault();
@@ -170,6 +173,7 @@ namespace MonitorControl
 
         private void RenderMonitorList()
         {
+            UpdateRecoveryMenu();
             var list = Element<StackPanel>("MonitorList"); list.Children.Clear();
             Element<TextBlock>("MonitorCount").Text = monitors.Count.ToString("00");
             for (int i = 0; i < monitors.Count; i++)
@@ -211,8 +215,15 @@ namespace MonitorControl
             Element<TextBlock>("DeviceTitle").Text = selected.Name;
             Element<TextBlock>("DeviceSubtitle").Text = (selected.Name != selected.HardwareName ? selected.HardwareName + "  ·  " : "") + selected.Display + "  ·  " + selected.Resolution + "  ·  " + selected.PositionLabel;
             Element<TextBlock>("ConnectionText").Text = demo ? "데모 모니터" : selected.Features.Any(x => x.Backend == "WMI") ? "Windows 밝기" : selected.Features.Count > 0 ? "DDC/CI 연결" : "제어 미지원";
+            if (!demo && selected.IsHdmi) Element<TextBlock>("ConnectionText").Text = selected.ControlFaulted ? "HDMI 통신 중지" : selected.SafeDdc ? "HDMI 안정 모드" : "HDMI · DDC/CI";
             var map = new DisplayMapControl(monitors, SelectMonitor) { Height = 140, Margin = new Thickness(0, 0, 0, 14) };
             map.SetSelected(selected.Id); panel.Children.Add(map);
+            if (selected.IsHdmi)
+            {
+                var recover = new Button { Content = "HDMI 신호 복구", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 14), ToolTip = "현재 화면 구성을 유지하며 출력을 다시 초기화합니다. 모든 화면이 잠깐 깜박일 수 있습니다." };
+                string id = selected.Id; AutomationProperties.SetName(recover, "HDMI 신호 복구");
+                recover.Click += async delegate { await RecoverHdmiAsync(id); }; panel.Children.Add(recover);
+            }
             var basic = selected.Features.Where(x => x.Definition.Basic).ToList();
             if (basic.Count > 0)
             {
@@ -276,6 +287,7 @@ namespace MonitorControl
             menu.Items.Add("위젯 표시 / 숨기기", null, delegate { widgets.ToggleVisibility(); });
             menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add("모니터 다시 검색", null, async delegate { await RefreshAsync(); });
+            menu.Items.Add(new Forms.ToolStripMenuItem("HDMI 신호 복구") { Enabled = false, ToolTipText = "현재 화면 구성으로 출력을 다시 초기화합니다. 모든 화면이 잠깐 깜박일 수 있습니다." });
             menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add("종료", null, delegate { RequestExit(); });
             tray.ContextMenuStrip = menu;
@@ -327,6 +339,8 @@ namespace MonitorControl
             if (settingsWindow != null) { settingsWindow.Activate(); return; }
             settingsWindow = new DisplaySettingsWindow(view.Resources, monitors, widgets.Settings, delegate {
                 ApplyStartupRegistration();
+                bool safetyChanged = service.HdmiSafeMode != widgets.Settings.HdmiSafeMode;
+                service.HdmiSafeMode = widgets.Settings.HdmiSafeMode;
                 ApplyDisplayNames(); widgets.Save(); RenderMonitorList(); RenderFeatures(); widgets.Rebind(monitors);
                 brightnessTimer.Stop(); pendingBrightness.Clear(); refreshNativeBrightness = false; ConfigureBrightnessInput();
                 if (flyout.IsVisible) flyout.Bind(monitors);
@@ -334,6 +348,7 @@ namespace MonitorControl
                 SetStatus(!demo && inputSettings.Enabled && inputSettings.UseHotkeys && !brightnessInput.HotkeysAvailable
                     ? "설정 저장됨 · 다른 앱이 단축키를 사용 중이어서 등록하지 못했습니다."
                     : "설정 저장됨");
+                if (safetyChanged) { displayTimer.Stop(); displayTimer.Start(); }
             }, IdentifyMonitor, async delegate { await updater.CheckAsync(); }) { Owner = this };
             settingsWindow.Closed += delegate { settingsWindow = null; };
             settingsWindow.Show();
@@ -368,7 +383,7 @@ namespace MonitorControl
 
         private void OnBrightnessDelta(int delta)
         {
-            if (closing || refreshing || delta == 0) return;
+            if (closing || refreshing || recovering || delta == 0) return;
             string source = brightnessInput.SourceKind, sourceInstance = brightnessInput.WindowsSourceInstance;
             // The Windows event already contains its panel's actual value. Querying
             // WMI again before sending the external writes adds visible lag.
@@ -430,12 +445,43 @@ namespace MonitorControl
         }
 
         private void ShowWindow() { Show(); if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal; Activate(); }
+
+        private void UpdateRecoveryMenu()
+        {
+            if (tray == null) return;
+            var menu = tray.ContextMenuStrip.Items.OfType<Forms.ToolStripMenuItem>().First(x => x.Text == "HDMI 신호 복구");
+            foreach (Forms.ToolStripItem item in menu.DropDownItems.Cast<Forms.ToolStripItem>().ToArray()) item.Dispose();
+            menu.DropDownItems.Clear();
+            foreach (var monitor in monitors.Where(x => x.IsHdmi))
+            {
+                string id = monitor.Id;
+                menu.DropDownItems.Add(monitor.Name + " · " + monitor.Display, null, async delegate { await RecoverHdmiAsync(id); });
+            }
+            menu.Enabled = !recovering && menu.DropDownItems.Count > 0;
+        }
+
+        private async Task RecoverHdmiAsync(string id)
+        {
+            if (closing || refreshing || recovering) return;
+            var monitor = monitors.FirstOrDefault(x => x.Id == id && x.IsHdmi);
+            if (monitor == null) return;
+            recovering = true; displayTimer.Stop(); brightnessTimer.Stop(); pendingBrightness.Clear(); refreshNativeBrightness = false;
+            foreach (var row in rows) row.Stop();
+            widgets.BeforeScan(); flyout.Suspend(); flyout.Hide(); IsEnabled = false;
+            if (settingsWindow != null) settingsWindow.IsEnabled = false;
+            UpdateRecoveryMenu(); SetStatus(monitor.Name + " · 디스플레이 신호 재초기화 중");
+            string message;
+            try { await service.RecoverHdmiAsync(monitor); message = "디스플레이 신호 재초기화를 요청했습니다. 화면 상태를 확인하세요."; }
+            catch (Exception ex) { message = "HDMI 신호 복구 실패 · " + ex.Message; }
+            finally { recovering = false; IsEnabled = true; if (settingsWindow != null) settingsWindow.IsEnabled = true; }
+            if (!closing) { await RefreshMonitorsAsync(false); SetStatus(message); }
+        }
         private void OnDisplayChanged(object sender, EventArgs e) { ScheduleScan(); }
         private void OnPowerChanged(object sender, PowerModeChangedEventArgs e) { if (e.Mode == PowerModes.Resume) ScheduleScan(); }
         private void ScheduleScan()
         {
             if (demo || Dispatcher.HasShutdownStarted) return;
-            Dispatcher.BeginInvoke(new Action(delegate { if (!closing) { displayTimer.Stop(); displayTimer.Start(); } }));
+            Dispatcher.BeginInvoke(new Action(delegate { if (!closing && !recovering) { displayTimer.Stop(); displayTimer.Start(); } }));
         }
 
         private async void OnClosing(object sender, CancelEventArgs e)

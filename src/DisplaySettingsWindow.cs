@@ -23,7 +23,7 @@ namespace MonitorControl
         private readonly Dictionary<string, bool> targetDrafts = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, MonitorDevice> knownMonitors = new Dictionary<string, MonitorDevice>(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> supportedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        private readonly CheckBox enabled, followWindows, hotkeys, checkOnStartup, startWithWindows, startInTray;
+        private readonly CheckBox enabled, followWindows, hotkeys, checkOnStartup, startWithWindows, startInTray, hdmiSafeMode;
         private readonly ComboBox mode;
         private readonly Slider step;
         private readonly TextBlock stepValue, message;
@@ -55,6 +55,11 @@ namespace MonitorControl
             map = new DisplayMapControl(monitors, delegate(MonitorDevice monitor) { if (identify != null) identify(monitor.Id); });
             map.Margin = new Thickness(0, 0, 0, 13); body.Children.Add(map);
             monitorEditors = new StackPanel(); body.Children.Add(monitorEditors); RebuildMonitorEditors();
+
+            Divider(body); Section(body, "HDMI 연결 안정성");
+            hdmiSafeMode = Check("HDMI 안정 모드", "HDMI 안정 모드"); hdmiSafeMode.IsChecked = settings.HdmiSafeMode; body.Children.Add(hdmiSafeMode);
+            var hdmiHint = Label("HDMI는 밝기·명암만 조회하고 제어 간격을 둡니다. 화면이 깨지면 트레이 오른쪽 메뉴의 HDMI 신호 복구를 실행하세요.", 10, "#7F9BAE");
+            hdmiHint.TextWrapping = TextWrapping.Wrap; hdmiHint.Margin = new Thickness(25, 7, 0, 0); body.Children.Add(hdmiHint);
 
             Divider(body); Section(body, "키보드 밝기 조절");
             var brightness = settings.Brightness ?? new BrightnessPreferences();
@@ -219,13 +224,15 @@ namespace MonitorControl
             }
             var oldMonitors = settings.Monitors; var oldBrightness = settings.Brightness; bool oldCheck = settings.CheckUpdatesOnStartup;
             bool oldStartWithWindows = settings.StartWithWindows, oldStartInTray = settings.StartInTray;
+            bool oldHdmiSafeMode = settings.HdmiSafeMode;
             settings.Monitors = preferences;
             settings.Brightness = new BrightnessPreferences { Enabled = active, FollowWindows = followWindows.IsChecked == true, Mode = routing, SelectedMonitorIds = selected.ToList(), StepPercent = (int)Math.Round(step.Value), UseHotkeys = hotkeys.IsChecked == true };
             settings.CheckUpdatesOnStartup = checkOnStartup.IsChecked == true;
             settings.StartWithWindows = startWithWindows.IsChecked == true;
             settings.StartInTray = startInTray.IsChecked == true;
+            settings.HdmiSafeMode = hdmiSafeMode.IsChecked == true;
             try { if (save != null) save(); map.Refresh(); RefreshTargetLabels(); ShowMessage("저장됨", false); }
-            catch (Exception ex) { settings.Monitors = oldMonitors; settings.Brightness = oldBrightness; settings.CheckUpdatesOnStartup = oldCheck; settings.StartWithWindows = oldStartWithWindows; settings.StartInTray = oldStartInTray; ShowMessage(ex.Message, true); }
+            catch (Exception ex) { settings.Monitors = oldMonitors; settings.Brightness = oldBrightness; settings.CheckUpdatesOnStartup = oldCheck; settings.StartWithWindows = oldStartWithWindows; settings.StartInTray = oldStartInTray; settings.HdmiSafeMode = oldHdmiSafeMode; ShowMessage(ex.Message, true); }
         }
 
         private void ShowMessage(string text, bool error) { if (message != null) { message.Text = text; message.Foreground = Color(error ? "#F0B394" : "#8EA9BB"); } }

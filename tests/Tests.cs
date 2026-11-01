@@ -2,9 +2,11 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Runtime.InteropServices;
 using MonitorControl;
 
 internal static class Tests
@@ -60,6 +62,8 @@ internal static class Tests
             CheckWindowsBackend();
             CheckParallelBrightness();
             CheckBrightnessFailures();
+            CheckHdmiSafety();
+            CheckHdmiRecovery();
             Console.WriteLine(count + " checks passed. No physical monitor values were changed."); return 0;
         }
         catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
@@ -165,5 +169,70 @@ internal static class Tests
         }
         public bool TryRead(MonitorDevice device, MonitorFeature feature, out uint value)
         { Interlocked.Increment(ref Reads); return values.TryGetValue(feature, out value) && Readable; }
+    }
+
+    private static void CheckHdmiSafety()
+    {
+        var device = new MonitorDevice { Id = "hdmi-pacing", IsHdmi = true, SafeDdc = true, Demo = true };
+        int calls = 0;
+        MonitorService.DdcCall(device, "probe", delegate { calls++; return true; });
+        var clock = Stopwatch.StartNew();
+        MonitorService.DdcCall(device, "probe", delegate { calls++; return true; });
+        Check(calls == 2 && clock.ElapsedMilliseconds >= 135, "HDMI control calls leave a settling interval between commands");
+        device.ControlFaulted = true;
+        Check(!MonitorService.DdcCall(device, "probe", delegate { calls++; return true; }) && calls == 2, "Quarantined HDMI calls never reach the native transport");
+        device.Name = "alias"; device.HardwareName = "hardware";
+        device.Features.Add(new MonitorFeature { Definition = FeatureCatalog.All[0], Maximum = 100, Current = 45 });
+        var fresh = new MonitorDevice { Id = device.Id, IsHdmi = true, SafeDdc = true };
+        var old = new Dictionary<string, MonitorDevice> { { device.Id, device } };
+        Check(MonitorService.RestoreConnectionState(fresh, old, true) && fresh.ControlFaulted && Brightness(fresh).Current == 45 && fresh.Name == "hardware", "Even explicit rescanning preserves HDMI quarantine without confusing aliases with hardware names");
+        fresh.Features[0].Current = 20;
+        Check(Brightness(device).Current == 45, "Rebinding HDMI state does not share mutable feature values with stale models");
+        Check(!MonitorService.RestoreConnectionState(new MonitorDevice { Id = device.Id, IsHdmi = false }, old, false), "A changed connector does not inherit another HDMI channel's quarantine");
+        device.ControlFaulted = false;
+        Check(MonitorService.RestoreConnectionState(new MonitorDevice { Id = device.Id, IsHdmi = true, SafeDdc = true }, old, false), "Automatic display notifications reuse known HDMI controls without querying the hardware again");
+        Check(!MonitorService.RestoreConnectionState(new MonitorDevice { Id = device.Id, IsHdmi = true, SafeDdc = false }, old, false), "Changing HDMI safety mode triggers fresh capability discovery");
+        Check(Marshal.SizeOf(typeof(WindowsDisplayRecovery.DisplayPath)) == 72 && Marshal.SizeOf(typeof(WindowsDisplayRecovery.DisplayMode)) == 64, "Display configuration snapshots match the Windows native structure sizes");
+    }
+
+    private static void CheckHdmiRecovery()
+    {
+        var transport = new FakeTransport(); var recovery = new FakeRecovery();
+        using (var service = new MonitorService(true, transport, recovery))
+        {
+            var monitor = service.ScanAsync().GetAwaiter().GetResult()[0];
+            monitor.IsHdmi = true; monitor.SafeDdc = true; monitor.Connection = "HDMI"; monitor.ControlFaulted = true;
+            monitor = service.ScanAsync().GetAwaiter().GetResult()[0];
+            int writes = transport.Writes;
+            bool rejected = false;
+            try { service.SetAsync(monitor, Brightness(monitor), 40).GetAwaiter().GetResult(); } catch (InvalidOperationException) { rejected = true; }
+            Check(rejected && transport.Writes == writes && monitor.ControlFaulted, "Rescanning a failed HDMI connection does not silently resume brightness traffic");
+            service.RecoverHdmiAsync(monitor, true).GetAwaiter().GetResult();
+            Check(recovery.Validations == 1 && recovery.Resets == 0 && !monitor.Disposed && monitor.ControlFaulted, "Validation checks recovery without resetting outputs or clearing quarantine");
+            recovery.Fail = true;
+            rejected = false;
+            try { service.RecoverHdmiAsync(monitor).GetAwaiter().GetResult(); } catch (InvalidOperationException) { rejected = true; }
+            monitor = service.ScanAsync(false).GetAwaiter().GetResult()[0];
+            Check(rejected && monitor.ControlFaulted, "A failed signal reset keeps HDMI control quarantined after rebinding");
+            recovery.Fail = false;
+            service.RecoverHdmiAsync(monitor).GetAwaiter().GetResult();
+            rejected = false;
+            try { service.SetAsync(monitor, Brightness(monitor), 40).GetAwaiter().GetResult(); } catch (InvalidOperationException) { rejected = true; }
+            Check(rejected && monitor.Disposed && recovery.Resets == 2 && transport.Writes == writes, "Signal recovery invalidates old handles so queued brightness writes cannot replay afterward");
+            monitor = service.ScanAsync(false).GetAwaiter().GetResult()[0];
+            Check(!monitor.ControlFaulted && service.SetAsync(monitor, Brightness(monitor), 40).GetAwaiter().GetResult() == 40, "Fresh HDMI handles resume control after an explicit successful reinitialization");
+        }
+    }
+
+    private sealed class FakeRecovery : IDisplayRecovery
+    {
+        internal int Validations, Resets;
+        internal bool Fail;
+        public void Reinitialize(MonitorDevice monitor, bool validateOnly)
+        {
+            if (validateOnly) { Validations++; return; }
+            Resets++;
+            if (Fail) throw new InvalidOperationException("Fake driver refused the supplied configuration");
+        }
     }
 }

@@ -1,16 +1,16 @@
 # LumaDock
 
-[**Windows 설치 파일 다운로드 · 1.0.2**](https://github.com/SCOTT0318/LumaDock/releases/download/v1.0.2/LumaDock-1.0.2.exe)
+[**Windows 설치 파일 다운로드 · 1.0.3**](https://github.com/SCOTT0318/LumaDock/releases/download/v1.0.3/LumaDock-1.0.3.exe)
 
-[릴리스 설명](https://github.com/SCOTT0318/LumaDock/releases/tag/v1.0.2) · [SHA-256 체크섬](https://github.com/SCOTT0318/LumaDock/releases/download/v1.0.2/SHA256SUMS.txt)
+[릴리스 설명](https://github.com/SCOTT0318/LumaDock/releases/tag/v1.0.3) · [SHA-256 체크섬](https://github.com/SCOTT0318/LumaDock/releases/download/v1.0.3/SHA256SUMS.txt)
 
 Windows 모니터 밝기·명암 제어와 바탕화면 위젯.
 
-현재 버전: **1.0.2**
+현재 버전: **1.0.3**
 
 ## 설치
 
-[1.0.2 릴리스](https://github.com/SCOTT0318/LumaDock/releases/tag/v1.0.2)에서 `LumaDock-1.0.2.exe`를 내려받아 실행합니다. 처음 업데이트할 때는 트레이 메뉴의 **종료**로 기존 앱을 닫으세요.
+[1.0.3 릴리스](https://github.com/SCOTT0318/LumaDock/releases/tag/v1.0.3)에서 `LumaDock-1.0.3.exe`를 내려받아 실행합니다. 처음 업데이트할 때는 트레이 메뉴의 **종료**로 기존 앱을 닫으세요.
 
 - 기본 위치: `C:\LumaDock`
 - 다른 부모 폴더 선택 시 그 아래 `LumaDock`을 만들어 설치합니다. 예: `D:\Apps` → `D:\Apps\LumaDock`
@@ -44,7 +44,13 @@ Windows 모니터 밝기·명암 제어와 바탕화면 위젯.
 
 배치 설정과 오류 기록은 `%LocalAppData%\LumaDock`에 저장합니다. 밝기 등 하드웨어 값은 저장하거나 시작 시 덮어쓰지 않습니다. 여러 창의 조절 값은 동기화됩니다. 슬라이더는 마지막 조작 약 320ms 후 적용합니다.
 
-키보드·Windows 연동 밝기는 짧은 연속 입력을 최신 값으로 합쳐 대상 모니터에 병렬로 요청합니다. Windows가 이미 변경한 화면에는 같은 변화를 다시 적용하지 않습니다. 외장 화면 밝기는 변경 후 한 번 확인하며, 통신에 실패한 모니터는 추가 제어를 중지합니다. 연결을 확인한 뒤 **다시 검색**하면 제어를 재개합니다.
+키보드·Windows 연동 밝기는 짧은 연속 입력을 최신 값으로 합쳐 대상 모니터에 병렬로 요청합니다. Windows가 이미 변경한 화면에는 같은 변화를 다시 적용하지 않습니다. 외장 화면 밝기는 변경 후 한 번 확인하며, 통신에 실패한 모니터는 추가 제어를 중지합니다.
+
+**설정 → HDMI 연결 안정성 → HDMI 안정 모드**는 기본으로 켜집니다. HDMI는 밝기·명암만 조회하고 명령 사이에 간격을 두며, 자동 화면 재검색에서는 알려진 제어 정보를 재사용합니다. HDMI의 추가 기능이 필요하면 이 옵션을 끄고 저장하세요. DP의 지원 기능은 계속 조회합니다.
+
+HDMI 화면이 깨지거나 신호가 없어지면 **트레이 오른쪽 클릭 → HDMI 신호 복구 → 해당 모니터**를 실행합니다. 본창에서 HDMI 모니터를 선택해도 복구 버튼이 나타납니다. 현재 배치·해상도·주사율 구성을 검증한 뒤 같은 구성을 그래픽 드라이버에 강제로 적용합니다. 모든 화면이 잠깐 깜박일 수 있습니다. 통신 실패로 중지한 HDMI는 재검색만으로 제어를 재개하지 않으며, 복구 요청 뒤 새 제어 연결을 엽니다. 이 기능은 모니터 내부 고장이나 물리 케이블 문제의 복구를 보장하지 않습니다.
+
+HDMI 제어·실패·복구 요청은 `%LocalAppData%\LumaDock\display.log`에 기록합니다. 화면 신호 문제는 Windows가 연결을 정상으로 보고해도 발생할 수 있어, 단순 밝기 통신 실패만으로 화면 초기화를 자동 실행하지 않습니다.
 
 외장 모니터의 DDC/CI를 켜야 합니다. 연결 장치·화면 모드에 따라 지원 기능이 달라집니다. 제조사 전용 OSD 항목은 등록된 표준 메뉴 외에 코드 정보만 표시합니다.
 
@@ -70,6 +76,9 @@ Windows 모니터 밝기·명암 제어와 바탕화면 위젯.
 
 # 현재 값과 지원 기능만 조회
 Start-Process .\bin\LumaDock.exe -ArgumentList '--diagnose artifacts\monitors.json' -Wait
+
+# DDC 통신이나 화면 초기화 없이 Windows 화면 구성과 복구 가능 여부만 검증
+Start-Process .\bin\LumaDock.exe -ArgumentList '--diagnose-display artifacts\display.json' -Wait
 
 # 데모 화면과 위젯 미리보기 출력
 Start-Process .\bin\LumaDock.exe -ArgumentList '--render-demo artifacts\preview-v2' -Wait

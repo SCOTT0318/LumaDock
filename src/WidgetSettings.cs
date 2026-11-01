@@ -17,6 +17,7 @@ namespace MonitorControl
         public bool CheckUpdatesOnStartup = true;
         public bool StartWithWindows = true;
         public bool StartInTray = true;
+        public bool HdmiSafeMode = true;
     }
 
     public sealed class MonitorPreference
@@ -160,7 +161,7 @@ namespace MonitorControl
         private static WidgetSettings Sanitize(WidgetSettings source)
         {
             var result = new WidgetSettings { RestoreWidgets = source.RestoreWidgets, CheckUpdatesOnStartup = source.CheckUpdatesOnStartup,
-                StartWithWindows = source.StartWithWindows, StartInTray = source.StartInTray };
+                StartWithWindows = source.StartWithWindows, StartInTray = source.StartInTray, HdmiSafeMode = source.HdmiSafeMode };
             var knownMonitors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var monitor in (source.Monitors ?? new List<MonitorPreference>()).Where(x => x != null))
             {
