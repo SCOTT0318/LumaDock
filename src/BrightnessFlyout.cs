@@ -8,6 +8,7 @@ using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 
 namespace MonitorControl
@@ -19,9 +20,17 @@ namespace MonitorControl
         private readonly Func<Task> rescan;
         private readonly StackPanel list;
         private readonly List<FeatureRow> rows = new List<FeatureRow>();
+        private readonly DispatcherTimer allTimer;
+        private List<MonitorDevice> monitors = new List<MonitorDevice>();
+        private Slider allSlider;
+        private TextBlock allValue;
+        private int? pendingAll;
+        private bool updatingAll, applyingAll;
         internal BrightnessFlyout(MonitorService monitorService, ResourceDictionary styles, Action<string> report, Func<Task> refresh, Action open, Action settings)
         {
             service = monitorService; status = report; rescan = refresh;
+            allTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(320) };
+            allTimer.Tick += delegate { allTimer.Stop(); ApplyAllBrightness(); };
             Title = "LumaDock 밝기"; Width = 390; SizeToContent = SizeToContent.Height; MaxHeight = Math.Max(300, SystemParameters.WorkArea.Height - 30);
             WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize; ShowInTaskbar = false; Topmost = true;
             Background = MainWindow.Brush("#111E29"); Foreground = MainWindow.Brush("#EDF6FA"); Icon = AppIdentity.WindowIcon();
@@ -46,6 +55,8 @@ namespace MonitorControl
         internal void Bind(IList<MonitorDevice> monitors)
         {
             Suspend(); rows.Clear(); list.Children.Clear();
+            this.monitors = monitors.ToList();
+            BuildAllBrightness();
             if (monitors.Count == 0) list.Children.Add(MainWindow.Text("연결된 모니터 없음", 12, "#90AAB8"));
             foreach (var monitor in monitors)
             {
@@ -53,8 +64,65 @@ namespace MonitorControl
                 var location = MainWindow.Text(monitor.Display + " · " + monitor.PositionLabel, 10, "#88A4B5"); location.Margin = new Thickness(3, 0, 3, 10); list.Children.Add(location);
                 var feature = monitor.Features.FirstOrDefault(x => x.Definition.Code == 0x10);
                 if (feature == null) { var unsupported = MainWindow.Text("밝기 제어 미지원", 11, "#819BAA"); unsupported.Margin = new Thickness(4, 0, 0, 17); list.Children.Add(unsupported); continue; }
-                var row = new FeatureRow(service, monitor, feature, status, rescan, true); rows.Add(row); list.Children.Add(row);
+                var row = new FeatureRow(service, monitor, feature, status, rescan, true, false, CancelAllPending); rows.Add(row); list.Children.Add(row);
             }
+        }
+
+        private void BuildAllBrightness()
+        {
+            var card = new Border { Background = MainWindow.Brush("#203630"), BorderBrush = MainWindow.Brush("#4D8E7F"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(11), Padding = new Thickness(14), Margin = new Thickness(0, 0, 0, 18) };
+            var body = new StackPanel(); card.Child = body; list.Children.Add(card);
+            var heading = new DockPanel(); body.Children.Add(heading);
+            allValue = MainWindow.Text("", 15, "#8CE8D3"); DockPanel.SetDock(allValue, Dock.Right); heading.Children.Add(allValue);
+            var label = MainWindow.Text("전체 밝기", 13, "#EDF9F6"); label.FontWeight = FontWeights.SemiBold; heading.Children.Add(label);
+            var hint = MainWindow.Text("연결된 모니터를 같은 밝기로 조절합니다", 10, "#A3BFB5"); hint.Margin = new Thickness(0, 6, 0, 0); body.Children.Add(hint);
+            allSlider = new Slider { Minimum = 0, Maximum = 100, SmallChange = 1, LargeChange = 5, Margin = new Thickness(0, 13, 0, 0) };
+            AutomationProperties.SetName(allSlider, "전체 밝기");
+            AutomationProperties.SetHelpText(allSlider, "밝기 제어를 지원하는 모든 연결 모니터에 적용합니다."); body.Children.Add(allSlider);
+            allSlider.ValueChanged += delegate {
+                if (updatingAll) return;
+                pendingAll = (int)Math.Round(allSlider.Value);
+                allValue.Text = pendingAll.Value + "%";
+                foreach (var row in rows) row.CancelPending();
+                if (!applyingAll) { allTimer.Stop(); allTimer.Start(); }
+            };
+            RefreshAllBrightness();
+        }
+
+        private List<MonitorDevice> AllTargets()
+        { return monitors.Where(x => x.Features.Any(f => f.Definition.Code == 0x10 && f.Writable)).ToList(); }
+
+        private void RefreshAllBrightness()
+        {
+            if (allSlider == null || pendingAll.HasValue || applyingAll) return;
+            var values = AllTargets().Select(x => x.Features.First(f => f.Definition.Code == 0x10)).Select(x => x.Percent(x.Current)).ToArray();
+            updatingAll = true;
+            allSlider.IsEnabled = values.Length > 0;
+            allSlider.Value = values.Length == 0 ? 0 : values.Average();
+            allValue.Text = values.Length == 0 ? "지원 없음" : values.Distinct().Count() == 1 ? values[0] + "%" : "서로 다름";
+            updatingAll = false;
+        }
+
+        private void CancelAllPending()
+        { allTimer.Stop(); pendingAll = null; RefreshAllBrightness(); }
+
+        private async void ApplyAllBrightness()
+        {
+            if (applyingAll) return;
+            applyingAll = true;
+            try
+            {
+                while (pendingAll.HasValue)
+                {
+                    int percent = pendingAll.Value; pendingAll = null;
+                    var batch = AllTargets().ToDictionary(x => x, x => percent);
+                    var results = await service.SetBrightnessAsync(batch);
+                    var failed = results.Where(x => x.Error != null).ToList();
+                    status(failed.Count == 0 ? "전체 밝기 " + percent + "% 적용됨" : "전체 밝기 · " + failed[0].Device.Name + " 변경 실패 · " + failed[0].Error.Message);
+                }
+            }
+            catch (Exception ex) { pendingAll = null; status("전체 밝기 변경 실패 · " + ex.Message); }
+            finally { applyingAll = false; RefreshAllBrightness(); }
         }
 
         internal void ShowPopup()
@@ -72,9 +140,9 @@ namespace MonitorControl
             }
             Activate();
         }
-        internal void RefreshValues(MonitorFeature feature) { foreach (var row in rows) row.RefreshFromModel(feature); }
-        internal void Suspend() { foreach (var row in rows) row.Stop(); }
-        internal void HidePopup() { foreach (var row in rows) row.Stop(true); Hide(); }
+        internal void RefreshValues(MonitorFeature feature) { foreach (var row in rows) row.RefreshFromModel(feature); RefreshAllBrightness(); }
+        internal void Suspend() { CancelAllPending(); foreach (var row in rows) row.Stop(); }
+        internal void HidePopup() { allTimer.Stop(); ApplyAllBrightness(); foreach (var row in rows) row.Stop(true); Hide(); }
         internal void Shutdown() { Suspend(); Close(); }
         [StructLayout(LayoutKind.Sequential)] private struct NativeRect { public int Left, Top, Right, Bottom; }
         [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out NativeRect rect);

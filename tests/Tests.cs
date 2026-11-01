@@ -1,5 +1,10 @@
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using MonitorControl;
 
 internal static class Tests
@@ -52,8 +57,113 @@ internal static class Tests
             bool disposed = false;
             try { closed.ScanAsync().GetAwaiter().GetResult(); } catch (ObjectDisposedException) { disposed = true; }
             Check(disposed, "Closed services cannot reopen monitor connections");
+            CheckWindowsBackend();
+            CheckParallelBrightness();
+            CheckBrightnessFailures();
             Console.WriteLine(count + " checks passed. No physical monitor values were changed."); return 0;
         }
         catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
+    }
+
+    private static MonitorFeature Brightness(MonitorDevice device)
+    { return device.Features.Single(x => x.Definition.Code == 0x10); }
+
+    private static void CheckWindowsBackend()
+    {
+        var panel = new MonitorDevice { Id = @"ACM1234\ONE|0" };
+        var other = new MonitorDevice { Id = @"ACM1234\TWO|0" };
+        foreach (var monitor in new[] { panel, other })
+        {
+            monitor.Features.Add(new MonitorFeature { Definition = FeatureCatalog.All[0], Backend = "HighLevel", Maximum = 100, Current = 70 });
+            monitor.Features.Add(new MonitorFeature { Definition = FeatureCatalog.All[1], Maximum = 100, Current = 50 });
+        }
+        var devices = new List<MonitorDevice> { panel, other };
+        MonitorService.ApplyWmiBrightness(devices, @"DISPLAY\ACM1234\ONE_0", 60, new byte[] { 100, 50, 50, 0, 255 });
+        Check(devices.Count == 2 && Brightness(panel).Backend == "WMI" && Brightness(panel).Current == 60, "Windows-controlled panels use WMI even if DDC brightness was also discovered");
+        Check(panel.Features.Count == 2 && panel.Features[1].Current == 50 && Brightness(other).Backend == "HighLevel", "Preferring native brightness preserves contrast and identical monitors on other connections");
+        Check(Brightness(panel).Choices.SequenceEqual(new uint[] { 0, 50, 100 }), "Native brightness levels are valid, unique and ordered");
+    }
+
+    private static void CheckParallelBrightness()
+    {
+        var transport = new FakeTransport();
+        using (var service = new MonitorService(true, transport))
+        using (var firstStarted = new ManualResetEventSlim())
+        using (var secondStarted = new ManualResetEventSlim())
+        using (var releaseFirst = new ManualResetEventSlim())
+        using (var singleStarted = new ManualResetEventSlim())
+        {
+            var devices = service.ScanAsync().GetAwaiter().GetResult();
+            transport.BeforeWrite = delegate(MonitorDevice device, uint value) {
+                if (device == devices[0] && value == 40)
+                { firstStarted.Set(); if (!releaseFirst.Wait(5000)) throw new TimeoutException("Blocked fake monitor was not released."); }
+                if (device == devices[1]) secondStarted.Set();
+                if (device == devices[0] && value == 55) singleStarted.Set();
+            };
+            var batch = service.SetBrightnessAsync(new Dictionary<MonitorDevice, int> { { devices[0], 40 }, { devices[1], 40 } });
+            Task<uint> single = null;
+            try
+            {
+                Check(firstStarted.Wait(5000) && secondStarted.Wait(5000), "The second monitor starts its write while the first monitor is still blocked");
+                single = service.SetAsync(devices[0], Brightness(devices[0]), 55);
+                Check(!singleStarted.Wait(100), "A separate control cannot interleave writes on a monitor inside a brightness batch");
+            }
+            finally { releaseFirst.Set(); }
+            Check(batch.GetAwaiter().GetResult().All(x => x.Error == null), "Independent brightness writes and confirmations both succeed");
+            Check(single.GetAwaiter().GetResult() == 55 && Brightness(devices[1]).Current == 40 && transport.Reads == 3, "Single writes resume after the batch and brightness uses one confirmation per write");
+
+            firstStarted.Reset(); releaseFirst.Reset();
+            var old = devices[0];
+            batch = service.SetBrightnessAsync(new Dictionary<MonitorDevice, int> { { old, 40 } });
+            Task<List<MonitorDevice>> scan = null;
+            try
+            {
+                Check(firstStarted.Wait(5000), "A batch starts before a concurrent rescan");
+                scan = service.ScanAsync();
+                Check(!scan.Wait(100) && !old.Disposed, "Rescanning waits for in-flight brightness writes before destroying physical handles");
+            }
+            finally { releaseFirst.Set(); }
+            Check(batch.GetAwaiter().GetResult().All(x => x.Error == null) && scan.GetAwaiter().GetResult().Count == 3 && old.Disposed, "Rescanning completes safely once the batch releases its connections");
+            var stale = service.SetBrightnessAsync(new Dictionary<MonitorDevice, int> { { old, 30 } }).GetAwaiter().GetResult();
+            Check(stale.Single().Error is InvalidOperationException, "Batches reject stale monitor models after reconnection");
+        }
+    }
+
+    private static void CheckBrightnessFailures()
+    {
+        var transport = new FakeTransport();
+        using (var service = new MonitorService(true, transport))
+        {
+            var devices = service.ScanAsync().GetAwaiter().GetResult();
+            var disconnected = devices[0];
+            transport.BeforeWrite = delegate(MonitorDevice device, uint value) { if (device == disconnected) throw new Win32Exception(31, "Disconnected HDMI"); };
+            var results = service.SetBrightnessAsync(new Dictionary<MonitorDevice, int> { { devices[0], 35 }, { devices[1], 35 } }).GetAwaiter().GetResult();
+            Check(results.Single(x => x.Device == devices[0]).Error is Win32Exception && results.Single(x => x.Device == devices[1]).Error == null && Brightness(devices[1]).Current == 35, "A disconnected HDMI monitor does not stop another monitor from changing brightness");
+            int writes = transport.Writes;
+            results = service.SetBrightnessAsync(new Dictionary<MonitorDevice, int> { { devices[0], 30 } }).GetAwaiter().GetResult();
+            Check(results.Single().Error is InvalidOperationException && transport.Writes == writes && Brightness(devices[0]).Current == 72, "A failed HDMI connection receives no further commands until it is rescanned");
+            devices = service.ScanAsync().GetAwaiter().GetResult();
+            Check(service.SetAsync(devices[0], Brightness(devices[0]), 35).GetAwaiter().GetResult() == 35, "A fresh connection can be controlled again after rescanning");
+            transport.Readable = false;
+            int reads = transport.Reads;
+            results = service.SetBrightnessAsync(new Dictionary<MonitorDevice, int> { { devices[1], 25 } }).GetAwaiter().GetResult();
+            Check(results.Single().Error != null && transport.Reads == reads + 1 && Brightness(devices[1]).Current == 72, "Unreadable brightness is reported without repeated DDC queries or pretending it was confirmed");
+        }
+    }
+
+    private sealed class FakeTransport : IMonitorTransport
+    {
+        private readonly ConcurrentDictionary<MonitorFeature, uint> values = new ConcurrentDictionary<MonitorFeature, uint>();
+        internal Action<MonitorDevice, uint> BeforeWrite;
+        internal int Writes, Reads;
+        internal bool Readable = true;
+        public void Write(MonitorDevice device, MonitorFeature feature, uint value)
+        {
+            Interlocked.Increment(ref Writes);
+            if (BeforeWrite != null) BeforeWrite(device, value);
+            values[feature] = value;
+        }
+        public bool TryRead(MonitorDevice device, MonitorFeature feature, out uint value)
+        { Interlocked.Increment(ref Reads); return values.TryGetValue(feature, out value) && Readable; }
     }
 }

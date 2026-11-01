@@ -36,6 +36,7 @@ namespace MonitorControl
         private DisplaySettingsWindow settingsWindow;
         private readonly Dictionary<MonitorDevice, int> pendingBrightness = new Dictionary<MonitorDevice, int>();
         private bool applyingBrightness, refreshNativeBrightness;
+        private readonly DispatcherTimer brightnessTimer;
         private readonly DispatcherTimer displayTimer;
         private bool refreshing, refreshAgain, closing, allowClose, exitRequested;
         private readonly string previewDirectory;
@@ -59,6 +60,8 @@ namespace MonitorControl
             widgets = new WidgetManager(this, service, view.Resources, RefreshAsync, SetStatus, !demo && String.IsNullOrEmpty(previewDirectory));
             startupToTray = startInTray || (!demo && String.IsNullOrEmpty(previewDirectory) && widgets.Settings.StartInTray);
             brightnessInput = new BrightnessInput(this, OnBrightnessDelta, SetStatus, demo);
+            brightnessTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+            brightnessTimer.Tick += delegate { brightnessTimer.Stop(); if (!applyingBrightness) ApplyPendingBrightness(); };
             updater = new AppUpdater(this, demo, RequestExit);
             flyout = new BrightnessFlyout(service, view.Resources, SetStatus, RefreshAsync, ShowWindow, ShowDisplaySettings);
             service.FeatureChanged += OnFeatureChanged;
@@ -123,7 +126,7 @@ namespace MonitorControl
             refreshing = true;
             string oldId = selected == null ? null : selected.Id;
             foreach (var row in rows) row.Stop();
-            pendingBrightness.Clear(); flyout.Suspend();
+            brightnessTimer.Stop(); pendingBrightness.Clear(); refreshNativeBrightness = false; flyout.Suspend();
             widgets.BeforeScan();
             Element<Button>("RefreshButton").IsEnabled = false;
             Element<Button>("WidgetButton").IsEnabled = false;
@@ -325,7 +328,7 @@ namespace MonitorControl
             settingsWindow = new DisplaySettingsWindow(view.Resources, monitors, widgets.Settings, delegate {
                 ApplyStartupRegistration();
                 ApplyDisplayNames(); widgets.Save(); RenderMonitorList(); RenderFeatures(); widgets.Rebind(monitors);
-                pendingBrightness.Clear(); ConfigureBrightnessInput();
+                brightnessTimer.Stop(); pendingBrightness.Clear(); refreshNativeBrightness = false; ConfigureBrightnessInput();
                 if (flyout.IsVisible) flyout.Bind(monitors);
                 var inputSettings = widgets.Settings.Brightness;
                 SetStatus(!demo && inputSettings.Enabled && inputSettings.UseHotkeys && !brightnessInput.HotkeysAvailable
@@ -367,6 +370,18 @@ namespace MonitorControl
         {
             if (closing || refreshing || delta == 0) return;
             string source = brightnessInput.SourceKind, sourceInstance = brightnessInput.WindowsSourceInstance;
+            // The Windows event already contains its panel's actual value. Querying
+            // WMI again before sending the external writes adds visible lag.
+            if (source == "windows" && brightnessInput.WindowsSourceBrightness.HasValue)
+            {
+                foreach (var monitor in monitors.Where(x => String.Equals(x.WmiInstance, sourceInstance, StringComparison.OrdinalIgnoreCase)))
+                {
+                    var feature = monitor.Features.FirstOrDefault(x => x.Definition.Code == 0x10 && x.Backend == "WMI");
+                    if (feature == null) continue;
+                    feature.Current = feature.FromPercent(brightnessInput.WindowsSourceBrightness.Value);
+                    OnFeatureChanged(monitor, feature);
+                }
+            }
             var point = Forms.Control.MousePosition;
             var targets = BrightnessRouting.Targets(monitors, widgets.Settings.Brightness, point.X, point.Y);
             foreach (var monitor in targets)
@@ -380,8 +395,10 @@ namespace MonitorControl
                 if (!pendingBrightness.TryGetValue(monitor, out desired)) desired = feature.Percent(feature.Current);
                 pendingBrightness[monitor] = Math.Max(0, Math.Min(100, desired + delta));
             }
-            if (source == "windows" || source == "raw") refreshNativeBrightness = true;
-            if (!applyingBrightness) ApplyPendingBrightness();
+            if (source == "raw") refreshNativeBrightness = true;
+            // Accumulate a short burst into one latest value per monitor. Do not
+            // restart the timer on every event: held keys must still make progress.
+            if (!applyingBrightness && !brightnessTimer.IsEnabled) brightnessTimer.Start();
         }
 
         private async void ApplyPendingBrightness()
@@ -391,18 +408,21 @@ namespace MonitorControl
             {
                 while (!closing && !refreshing && (pendingBrightness.Count > 0 || refreshNativeBrightness))
                 {
-                    if (refreshNativeBrightness) { refreshNativeBrightness = false; await service.RefreshBrightnessAsync(true); }
-                    if (pendingBrightness.Count == 0) continue;
-                    var request = pendingBrightness.First();
-                    var feature = request.Key.Features.First(x => x.Definition.Code == 0x10);
-                    try
+                    if (pendingBrightness.Count > 0)
                     {
-                        uint value = feature.FromPercent(request.Value);
-                        if (value != feature.Current) await service.SetAsync(request.Key, feature, value);
+                        var batch = new Dictionary<MonitorDevice, int>(pendingBrightness);
+                        var results = await service.SetBrightnessAsync(batch);
+                        foreach (var result in results)
+                        {
+                            if (result.Error != null) SetStatus(result.Device.Name + " · 밝기 변경 실패 · " + result.Error.Message);
+                            int current;
+                            if (pendingBrightness.TryGetValue(result.Device, out current) && current == batch[result.Device]) pendingBrightness.Remove(result.Device);
+                        }
                     }
-                    catch (Exception ex) { SetStatus("밝기 변경 실패 · " + ex.Message); }
-                    int current;
-                    if (pendingBrightness.TryGetValue(request.Key, out current) && current == request.Value) pendingBrightness.Remove(request.Key);
+                    // Native readback is for UI synchronization only; external
+                    // monitor writes always get to start first.
+                    if (refreshNativeBrightness && pendingBrightness.Count == 0)
+                    { refreshNativeBrightness = false; await service.RefreshBrightnessAsync(true); }
                 }
             }
             catch (Exception ex) { SetStatus("밝기 조회 실패 · " + ex.Message); pendingBrightness.Clear(); }
@@ -425,7 +445,7 @@ namespace MonitorControl
             if (!exitRequested && !demo && String.IsNullOrEmpty(previewDirectory)) { Hide(); return; }
             if (closing) return;
             closing = true;
-            pendingBrightness.Clear(); brightnessInput.Dispose(); updater.Dispose(); flyout.Shutdown();
+            brightnessTimer.Stop(); pendingBrightness.Clear(); brightnessInput.Dispose(); updater.Dispose(); flyout.Shutdown();
             if (settingsWindow != null) settingsWindow.Close();
             foreach (var row in rows) row.Stop();
             displayTimer.Stop(); IsEnabled = false; SetStatus("모니터 연결을 정리하고 있습니다…");
@@ -481,6 +501,7 @@ namespace MonitorControl
         private readonly MonitorFeature feature;
         private readonly Action<string> report;
         private readonly Func<Task> refresh;
+        private readonly Action onUserChange;
         private readonly DispatcherTimer timer;
         private readonly TextBlock valueText, stateText;
         private Slider slider;
@@ -492,9 +513,10 @@ namespace MonitorControl
         private int revision;
         private uint requested;
 
-        public FeatureRow(MonitorService monitorService, MonitorDevice monitor, MonitorFeature control, Action<string> status, Func<Task> rescan, bool compact = false, bool lightTheme = false)
+        public FeatureRow(MonitorService monitorService, MonitorDevice monitor, MonitorFeature control, Action<string> status, Func<Task> rescan, bool compact = false, bool lightTheme = false, Action userChange = null)
         {
             service = monitorService; device = monitor; feature = control; report = status; refresh = rescan;
+            onUserChange = userChange;
             light = lightTheme;
             Background = MainWindow.Brush(light ? "#E7F0F2" : "#18232E"); BorderBrush = MainWindow.Brush(light ? "#CCDEE2" : "#2D3D49"); BorderThickness = new Thickness(1); CornerRadius = new CornerRadius(compact ? 11 : 14);
             Padding = compact ? new Thickness(14, 11, 14, 10) : new Thickness(23, 19, 23, 17); Margin = new Thickness(0, 0, 0, compact ? 8 : 12);
@@ -516,6 +538,7 @@ namespace MonitorControl
                 Grid.SetRow(slider, 1); layout.Children.Add(slider);
                 slider.ValueChanged += delegate {
                     if (updating || stopped) return;
+                    if (onUserChange != null) onUserChange();
                     requested = feature.FromPercent(slider.Value); revision++;
                     valueText.Text = feature.Percent(requested) + "%";
                     stateText.Text = "변경 대기…";
@@ -589,6 +612,9 @@ namespace MonitorControl
 
         internal void RefreshFromModel(MonitorFeature changed = null)
         { if (changed != null && changed != feature) return; if (!stopped && !timer.IsEnabled && writes == 0) ShowConfirmed(); }
+
+        internal void CancelPending()
+        { if (stopped) return; revision++; timer.Stop(); ShowConfirmed(); }
 
         public void Stop(bool flushPending = false)
         {

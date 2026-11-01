@@ -29,6 +29,7 @@ namespace MonitorControl
         public Dictionary<byte, List<uint>> Reported = new Dictionary<byte, List<uint>>();
         internal IntPtr Handle;
         internal bool Disposed;
+        internal bool ControlFaulted;
         public void Dispose()
         {
             if (Disposed) return;
@@ -37,15 +38,30 @@ namespace MonitorControl
         }
     }
 
+    public sealed class BrightnessChangeResult
+    {
+        public MonitorDevice Device { get; internal set; }
+        public Exception Error { get; internal set; }
+    }
+
+    internal interface IMonitorTransport
+    {
+        void Write(MonitorDevice device, MonitorFeature feature, uint value);
+        bool TryRead(MonitorDevice device, MonitorFeature feature, out uint value);
+    }
+
     public sealed class MonitorService : IDisposable
     {
         private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
         private readonly bool demo;
+        private readonly IMonitorTransport transport;
         private List<MonitorDevice> devices = new List<MonitorDevice>();
         private bool disposed;
         public event Action<MonitorDevice, MonitorFeature> FeatureChanged;
         public event Action<MonitorDevice, MonitorFeature, uint> FeatureChanging;
-        public MonitorService(bool demoMode) { demo = demoMode; }
+        public MonitorService(bool demoMode) : this(demoMode, null) { }
+        internal MonitorService(bool demoMode, IMonitorTransport monitorTransport)
+        { demo = demoMode; transport = monitorTransport ?? new MonitorTransport(); }
 
         public Task<List<MonitorDevice>> ScanAsync()
         {
@@ -173,7 +189,7 @@ namespace MonitorControl
                         try
                         {
                             uint actual;
-                            if (TryRead(monitor, feature, out actual) && actual != feature.Current)
+                            if (!monitor.ControlFaulted && transport.TryRead(monitor, feature, out actual) && actual != feature.Current)
                             { feature.Current = actual; changed.Add(new KeyValuePair<MonitorDevice, MonitorFeature>(monitor, feature)); }
                         }
                         catch (ManagementException) { }
@@ -251,29 +267,34 @@ namespace MonitorControl
                 foreach (ManagementObject row in results)
                 using (row)
                 {
-                    string instance = Convert.ToString(row["InstanceName"]);
-                    string id = NormalizeId(instance);
-                    // Match the complete instance, never just the model (identical monitors exist).
-                    var candidates = found.Where(x => x.Id == id || x.Id.StartsWith(id + "|", StringComparison.OrdinalIgnoreCase)).ToList();
-                    MonitorDevice device;
-                    if (candidates.Count == 1) device = candidates[0];
-                    else if (candidates.Count == 0)
-                    {
-                        device = new MonitorDevice { Id = id, Name = "내장 디스플레이", Display = "WMI", Resolution = "Windows 밝기 제어" };
-                        found.Add(device);
-                    }
-                    else continue;
-                    if (device.Features.Any(x => x.Definition.Code == 0x10)) continue;
-                    device.WmiInstance = instance;
-                    byte[] levels = row["Level"] as byte[];
-                    device.Features.Add(new MonitorFeature { Definition = FeatureCatalog.All[0], Current = Convert.ToUInt32(row["CurrentBrightness"]), Maximum = 100,
-                        Backend = "WMI", Choices = levels == null ? new List<uint>() : levels.Select(x => (uint)x).Distinct().OrderBy(x => x).ToList() });
-                    device.Notice = "내장 화면 밝기는 Windows 밝기 제어를 사용합니다.";
+                    ApplyWmiBrightness(found, Convert.ToString(row["InstanceName"]), Convert.ToUInt32(row["CurrentBrightness"]), row["Level"] as byte[]);
                 }
             }
             catch (ManagementException) { /* External-only systems commonly have no WMI class. */ }
             catch (UnauthorizedAccessException) { }
             catch (COMException) { }
+        }
+
+        internal static void ApplyWmiBrightness(List<MonitorDevice> found, string instance, uint brightness, byte[] levels)
+        {
+            string id = NormalizeId(instance);
+            if (id.Length == 0 || brightness > 100) return;
+            // Prefer Windows for a panel it controls, even when DDC discovery also
+            // succeeded. Otherwise firmware and this app can adjust it twice.
+            var candidates = found.Where(x => x.Id == id || x.Id.StartsWith(id + "|", StringComparison.OrdinalIgnoreCase)).ToList();
+            MonitorDevice device;
+            if (candidates.Count == 1) device = candidates[0];
+            else if (candidates.Count == 0)
+            {
+                device = new MonitorDevice { Id = id, Name = "내장 디스플레이", Display = "WMI", Resolution = "Windows 밝기 제어" };
+                found.Add(device);
+            }
+            else return;
+            device.WmiInstance = instance;
+            device.Features.RemoveAll(x => x.Definition.Code == 0x10);
+            device.Features.Insert(0, new MonitorFeature { Definition = FeatureCatalog.All[0], Current = brightness, Maximum = 100,
+                Backend = "WMI", Choices = levels == null ? new List<uint>() : levels.Where(x => x <= 100).Select(x => (uint)x).Distinct().OrderBy(x => x).ToList() });
+            device.Notice = "이 화면의 밝기는 Windows 밝기 제어를 사용합니다.";
         }
 
         public Task<uint> SetAsync(MonitorDevice device, MonitorFeature feature, uint value)
@@ -282,50 +303,93 @@ namespace MonitorControl
                 await gate.WaitAsync().ConfigureAwait(false);
                 try
                 {
-                    if (disposed || device.Disposed || !devices.Contains(device)) throw new InvalidOperationException("모니터 연결이 변경되었습니다. 다시 검색해 주세요.");
-                    if (!device.Features.Contains(feature) || !feature.Writable) throw new InvalidOperationException("변경할 수 없는 항목입니다.");
-                    if (feature.Definition.Discrete)
-                    { if (!feature.Choices.Contains(value)) throw new ArgumentOutOfRangeException("value"); }
-                    else if (value < feature.Minimum || value > feature.Maximum) throw new ArgumentOutOfRangeException("value");
-                    if (feature.Backend == "WMI" && feature.Choices.Count > 0) value = feature.Choices.OrderBy(x => Math.Abs((long)x - value)).First();
-                    if (device.Demo) { feature.Current = value; return value; }
-                    var changing = FeatureChanging;
-                    if (changing != null) changing(device, feature, value);
-                    if (feature.Backend == "WMI") WriteWmi(device.WmiInstance, value);
-                    else
-                    {
-                        bool ok = Retry(delegate {
-                            if (feature.Backend == "HighLevel") return feature.Definition.Code == 0x10
-                                ? NativeMethods.SetMonitorBrightness(device.Handle, value) : NativeMethods.SetMonitorContrast(device.Handle, value);
-                            return NativeMethods.SetVCPFeature(device.Handle, feature.Definition.Code, value);
-                        });
-                        if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error(), "모니터가 변경 요청에 응답하지 않았습니다.");
-                    }
-                    // Input switching can immediately sever DDC. A successful set is enough.
-                    if (feature.Definition.Code != 0x60)
-                    {
-                        uint actual = feature.Current;
-                        bool confirmed = false;
-                        for (int attempt = 0; attempt < 3; attempt++)
-                        {
-                            Thread.Sleep(100);
-                            uint read;
-                            if (TryRead(device, feature, out read))
-                            {
-                                confirmed = true; actual = read;
-                                if (actual == value) break;
-                            }
-                        }
-                        if (!confirmed) throw new InvalidOperationException("요청을 보냈지만 적용 값을 확인하지 못했습니다. 다시 검색해 주세요.");
-                        feature.Current = actual;
-                        if (actual != value) throw new InvalidOperationException("모니터가 요청한 값을 적용하지 않았습니다. 화면 모드나 OSD 설정을 확인해 주세요.");
-                    }
-                    else feature.Current = value;
-                    return feature.Current;
+                    return await SetCoreAsync(device, feature, value).ConfigureAwait(false);
                 }
                 finally { gate.Release(); }
             });
             return PublishChangeAsync(operation, device, feature);
+        }
+
+        // Hold the connection lifetime gate for the whole batch, but allow separate
+        // physical monitors to receive their writes without waiting for each other's
+        // readback. Scans, single writes and disposal cannot invalidate these handles.
+        public Task<List<BrightnessChangeResult>> SetBrightnessAsync(IDictionary<MonitorDevice, int> percentages)
+        {
+            if (percentages == null) throw new ArgumentNullException("percentages");
+            var requests = percentages.ToArray();
+            return Task.Run(async delegate {
+                await gate.WaitAsync().ConfigureAwait(false);
+                List<BrightnessChangeResult> results = null;
+                try
+                {
+                    var tasks = requests.Select(request => Task.Run(async delegate {
+                        var result = new BrightnessChangeResult { Device = request.Key };
+                        MonitorFeature feature = null;
+                        try
+                        {
+                            feature = request.Key.Features.FirstOrDefault(x => x.Definition.Code == 0x10);
+                            if (feature == null) throw new InvalidOperationException("밝기를 변경할 수 없는 모니터입니다.");
+                            await SetCoreAsync(request.Key, feature, feature.FromPercent(request.Value)).ConfigureAwait(false);
+                        }
+                        catch (Exception ex) { result.Error = ex; }
+                        return result;
+                    })).ToArray();
+                    results = (await Task.WhenAll(tasks).ConfigureAwait(false)).ToList();
+                    return results;
+                }
+                finally
+                {
+                    gate.Release();
+                    if (results != null) foreach (var result in results)
+                    {
+                        var feature = result.Device.Features.FirstOrDefault(x => x.Definition.Code == 0x10);
+                        if (feature != null) PublishChange(result.Device, feature);
+                    }
+                }
+            });
+        }
+
+        private async Task<uint> SetCoreAsync(MonitorDevice device, MonitorFeature feature, uint value)
+        {
+            if (disposed || device == null || device.Disposed || !devices.Contains(device)) throw new InvalidOperationException("모니터 연결이 변경되었습니다. 다시 검색해 주세요.");
+            if (!device.Features.Contains(feature) || !feature.Writable) throw new InvalidOperationException("변경할 수 없는 항목입니다.");
+            if (feature.Definition.Discrete)
+            { if (!feature.Choices.Contains(value)) throw new ArgumentOutOfRangeException("value"); }
+            else if (value < feature.Minimum || value > feature.Maximum) throw new ArgumentOutOfRangeException("value");
+            if (feature.Backend == "WMI" && feature.Choices.Count > 0) value = feature.Choices.OrderBy(x => Math.Abs((long)x - value)).First();
+            if (device.ControlFaulted) throw new InvalidOperationException("모니터 통신을 중지했습니다. 연결을 확인한 뒤 다시 검색해 주세요.");
+            if (feature.Current == value) return value;
+            try
+            {
+                var changing = FeatureChanging;
+                if (changing != null) changing(device, feature, value);
+                transport.Write(device, feature, value);
+                // Switching inputs can sever DDC immediately. Demo transports also
+                // need no hardware settling delay.
+                if (feature.Definition.Code == 0x60) { feature.Current = value; return value; }
+                bool brightness = feature.Definition.Code == 0x10;
+                uint actual = feature.Current;
+                bool confirmed = false;
+                for (int attempt = 0; attempt < (brightness ? 1 : 3); attempt++)
+                {
+                    if (!device.Demo) await Task.Delay(brightness ? 200 : 100).ConfigureAwait(false);
+                    uint read;
+                    if (transport.TryRead(device, feature, out read))
+                    {
+                        confirmed = true; actual = read;
+                        if (actual == value) break;
+                    }
+                }
+                if (!confirmed)
+                {
+                    if (feature.Backend != "WMI") device.ControlFaulted = true;
+                    throw new InvalidOperationException("요청을 보냈지만 적용 값을 확인하지 못했습니다. 연결을 확인한 뒤 다시 검색해 주세요.");
+                }
+                feature.Current = actual;
+                if (actual != value) throw new InvalidOperationException("모니터가 요청한 값을 적용하지 않았습니다. 화면 모드나 OSD 설정을 확인해 주세요.");
+                return actual;
+            }
+            catch (Win32Exception) { device.ControlFaulted = true; throw; }
         }
 
         private async Task<uint> PublishChangeAsync(Task<uint> operation, MonitorDevice device, MonitorFeature feature)
@@ -333,8 +397,37 @@ namespace MonitorControl
             try { return await operation.ConfigureAwait(false); }
             finally
             {
-                var notify = FeatureChanged;
-                if (notify != null) notify(device, feature);
+                PublishChange(device, feature);
+            }
+        }
+
+        private void PublishChange(MonitorDevice device, MonitorFeature feature)
+        {
+            var notify = FeatureChanged;
+            if (notify != null) notify(device, feature);
+        }
+
+        private sealed class MonitorTransport : IMonitorTransport
+        {
+            public void Write(MonitorDevice device, MonitorFeature feature, uint value)
+            {
+                if (device.Demo) { feature.Current = value; return; }
+                if (feature.Backend == "WMI") { WriteWmi(device.WmiInstance, value); return; }
+                Func<bool> write = delegate {
+                    if (feature.Backend == "HighLevel") return feature.Definition.Code == 0x10
+                        ? NativeMethods.SetMonitorBrightness(device.Handle, value) : NativeMethods.SetMonitorContrast(device.Handle, value);
+                    return NativeMethods.SetVCPFeature(device.Handle, feature.Definition.Code, value);
+                };
+                // A failed DDC write may already have reached the monitor. Repeating
+                // brightness writes immediately can overload an unstable connection.
+                bool ok = feature.Definition.Code == 0x10 ? write() : Retry(write);
+                if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error(), "모니터가 변경 요청에 응답하지 않았습니다.");
+            }
+
+            public bool TryRead(MonitorDevice device, MonitorFeature feature, out uint value)
+            {
+                if (device.Demo) { value = feature.Current; return true; }
+                return ReadNative(device, feature, out value);
             }
         }
 
@@ -358,7 +451,7 @@ namespace MonitorControl
             throw new InvalidOperationException("내장 디스플레이 연결을 찾지 못했습니다.");
         }
 
-        private static bool TryRead(MonitorDevice device, MonitorFeature feature, out uint value)
+        private static bool ReadNative(MonitorDevice device, MonitorFeature feature, out uint value)
         {
             uint actual = 0, minimum = 0, maximum = 0, type = 0;
             if (feature.Backend == "WMI")
@@ -371,12 +464,13 @@ namespace MonitorControl
                     { value = Convert.ToUInt32(row["CurrentBrightness"]); return true; }
                 value = 0; return false;
             }
-            bool ok = Retry(delegate {
+            Func<bool> read = delegate {
                 if (feature.Backend == "HighLevel") return feature.Definition.Code == 0x10
                     ? NativeMethods.GetMonitorBrightness(device.Handle, out minimum, out actual, out maximum)
                     : NativeMethods.GetMonitorContrast(device.Handle, out minimum, out actual, out maximum);
                 return NativeMethods.GetVCPFeatureAndVCPFeatureReply(device.Handle, feature.Definition.Code, out type, out actual, out maximum);
-            });
+            };
+            bool ok = feature.Definition.Code == 0x10 ? read() : Retry(read);
             value = actual;
             return ok && (feature.Definition.Discrete || (actual >= feature.Minimum && actual <= feature.Maximum));
         }
